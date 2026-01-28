@@ -32,7 +32,37 @@ ALLOWED_MIME_TYPES = [
     "image/webp",
     "image/tiff",
     "image/bmp",
+    "image/heic",
+    "image/heif",
 ]
+
+# Some mobile browsers send these content types for camera photos
+CAMERA_MIME_ALIASES = {
+    "image/jpg": "image/jpeg",
+    "application/octet-stream": None,  # Will be detected from extension
+}
+
+
+def normalize_mime_type(content_type: str | None, filename: str) -> str:
+    """Normalize MIME type, handling camera photo edge cases."""
+    if content_type in CAMERA_MIME_ALIASES:
+        if CAMERA_MIME_ALIASES[content_type] is not None:
+            return CAMERA_MIME_ALIASES[content_type]
+        # Detect from extension
+        ext = os.path.splitext(filename)[1].lower()
+        ext_to_mime = {
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".png": "image/png",
+            ".webp": "image/webp",
+            ".tiff": "image/tiff",
+            ".tif": "image/tiff",
+            ".bmp": "image/bmp",
+            ".heic": "image/heic",
+            ".heif": "image/heif",
+        }
+        return ext_to_mime.get(ext, content_type or "application/octet-stream")
+    return content_type or "image/jpeg"
 
 
 @router.post(
@@ -46,8 +76,10 @@ async def upload_document(
     db: AsyncSession = Depends(get_db),
 ):
     """Upload a document image for processing."""
-    # Validate file type
-    if file.content_type not in ALLOWED_MIME_TYPES:
+    # Normalize and validate file type (handle camera photo edge cases)
+    mime_type = normalize_mime_type(file.content_type, file.filename or "image.jpg")
+
+    if mime_type not in ALLOWED_MIME_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"File type not allowed. Allowed types: {', '.join(ALLOWED_MIME_TYPES)}",
@@ -66,7 +98,7 @@ async def upload_document(
         )
 
     # Generate unique filename
-    file_ext = os.path.splitext(file.filename)[1] or ".jpg"
+    file_ext = os.path.splitext(file.filename or "image.jpg")[1] or ".jpg"
     stored_filename = f"{uuid.uuid4()}{file_ext}"
 
     # Create user directory
@@ -87,11 +119,11 @@ async def upload_document(
     # Create document record
     document = Document(
         user_id=current_user.id,
-        original_filename=file.filename,
+        original_filename=file.filename or "camera_photo.jpg",
         stored_filename=stored_filename,
         file_path=file_path,
         file_size=file_size,
-        mime_type=file.content_type,
+        mime_type=mime_type,
         status="pending",
         expires_at=expires_at,
     )
@@ -135,8 +167,10 @@ async def upload_documents_batch(
     os.makedirs(user_dir, exist_ok=True)
 
     for file in files:
-        # Validate file type
-        if file.content_type not in ALLOWED_MIME_TYPES:
+        # Normalize and validate file type (handle camera photo edge cases)
+        mime_type = normalize_mime_type(file.content_type, file.filename or "image.jpg")
+
+        if mime_type not in ALLOWED_MIME_TYPES:
             continue  # Skip invalid files
 
         content = await file.read()
@@ -146,7 +180,7 @@ async def upload_documents_batch(
         if file_size > max_size:
             continue  # Skip oversized files
 
-        file_ext = os.path.splitext(file.filename)[1] or ".jpg"
+        file_ext = os.path.splitext(file.filename or "image.jpg")[1] or ".jpg"
         stored_filename = f"{uuid.uuid4()}{file_ext}"
         file_path = os.path.join(user_dir, stored_filename)
 
@@ -159,11 +193,11 @@ async def upload_documents_batch(
 
         document = Document(
             user_id=current_user.id,
-            original_filename=file.filename,
+            original_filename=file.filename or "camera_photo.jpg",
             stored_filename=stored_filename,
             file_path=file_path,
             file_size=file_size,
-            mime_type=file.content_type,
+            mime_type=mime_type,
             status="pending",
             expires_at=expires_at,
         )
