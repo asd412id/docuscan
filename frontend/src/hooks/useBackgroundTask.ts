@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { taskService, type TaskStatusResponse } from '@/services/documents';
+import type { CornerPoints, ScanSettings } from '@/types';
 
 interface UseBackgroundTaskOptions {
   pollInterval?: number;
@@ -183,20 +184,17 @@ export function useBulkBackgroundProcess() {
   const startBulkProcess = async (
     documents: Array<{
       document_uuid: string;
-      corners?: { top_left: number[]; top_right: number[]; bottom_right: number[]; bottom_left: number[] };
-      settings?: Record<string, unknown>;
+      corners?: CornerPoints;
+      settings?: ScanSettings;
     }>,
-    defaultSettings?: Record<string, unknown>
+    defaultSettings?: ScanSettings
   ) => {
     setIsProcessing(true);
     setError(null);
     setProgress({ current: 0, total: documents.length, percentage: 0 });
     
     try {
-      const response = await taskService.startBulkProcess(
-        documents as Parameters<typeof taskService.startBulkProcess>[0],
-        defaultSettings as Parameters<typeof taskService.startBulkProcess>[1]
-      );
+      const response = await taskService.startBulkProcess(documents, defaultSettings);
       taskHook.startTask(response.task_id);
     } catch (err) {
       setIsProcessing(false);

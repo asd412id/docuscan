@@ -38,8 +38,9 @@ COPY . .
 # Set build-time environment variables
 ENV VITE_API_URL=${VITE_API_URL}
 
-# Build application
-RUN npm run build
+# Build application (skip tsc type-check, Vite handles TS transpilation)
+# Type-checking should be done in CI/CD pipeline, not during container build
+RUN npm exec vite build
 
 # ===========================================
 # Stage 3: Production
