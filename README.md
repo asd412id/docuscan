@@ -1,68 +1,103 @@
-# DocuScan - Professional Document Scanner
+# DocuScan
 
-Aplikasi scan dokumen berbasis web yang profesional dan dapat diandalkan.
+<p align="center">
+  <img src="frontend/public/logo.svg" alt="DocuScan Logo" width="120" height="120">
+</p>
 
-## Fitur Utama
+<p align="center">
+  <strong>Professional Web-Based Document Scanner</strong>
+</p>
 
-- **Auto Edge Detection**: Deteksi tepi dokumen otomatis menggunakan OpenCV
-- **Manual Corner Adjustment**: Sesuaikan sudut dokumen secara manual dengan drag & drop
-- **Image Enhancement**: Filter warna, grayscale, hitam-putih, brightness, contrast
-- **OCR (Optical Character Recognition)**: Ekstrak teks dari dokumen menggunakan Tesseract
-- **Multi-page PDF Export**: Gabungkan beberapa scan menjadi satu PDF
-- **Batch Processing**: Proses banyak dokumen sekaligus
-- **Multi-language UI**: Bahasa Indonesia dan English
+<p align="center">
+  <a href="#features">Features</a> •
+  <a href="#tech-stack">Tech Stack</a> •
+  <a href="#quick-start">Quick Start</a> •
+  <a href="#deployment">Deployment</a> •
+  <a href="#api-reference">API Reference</a>
+</p>
+
+---
+
+## Features
+
+- **Auto Edge Detection** - Automatic document edge detection using OpenCV
+- **Manual Corner Adjustment** - Fine-tune document corners with drag & drop
+- **Image Enhancement** - Color, grayscale, black & white filters with brightness/contrast control
+- **OCR (Optical Character Recognition)** - Extract text from documents using Tesseract
+- **Multi-page PDF Export** - Combine multiple scans into a single PDF with customizable page sizes (A4, Letter, Legal, Folio/F4)
+- **Batch Processing** - Process multiple documents at once with background task support
+- **Multi-language UI** - Indonesian and English interface
+- **Rate Limiting** - Built-in API rate limiting for security
+- **JWT Authentication** - Secure authentication with access and refresh tokens
+
+---
 
 ## Tech Stack
 
 ### Backend
-- **Python 3.11** dengan FastAPI
-- **OpenCV** untuk image processing
-- **Tesseract** untuk OCR
-- **PostgreSQL** untuk database
-- **Redis** untuk caching dan queue
+| Technology | Purpose |
+|------------|---------|
+| Python 3.11 | Runtime |
+| FastAPI | Web framework |
+| OpenCV | Image processing |
+| Tesseract | OCR engine |
+| PostgreSQL | Database |
+| Redis | Cache & message broker |
+| Celery | Background task processing |
+| SQLAlchemy | ORM |
 
 ### Frontend
-- **React 18** dengan TypeScript
-- **Vite** untuk build tool
-- **Tailwind CSS** + **shadcn/ui** untuk UI components
-- **Zustand** untuk state management
-- **React Query** untuk data fetching
+| Technology | Purpose |
+|------------|---------|
+| React 19 | UI framework |
+| TypeScript | Type safety |
+| Vite | Build tool |
+| Tailwind CSS | Styling |
+| shadcn/ui | UI components |
+| Zustand | State management |
+| React Query | Data fetching |
 
 ### Infrastructure
-- **Docker Compose** untuk production deployment
-- **Nginx** sebagai reverse proxy
+| Technology | Purpose |
+|------------|---------|
+| Docker | Containerization |
+| Nginx | Reverse proxy |
+| Docker Compose | Orchestration |
 
 ---
 
-## Development Setup (Native)
+## Quick Start
 
 ### Prerequisites
 
-- **Python 3.11+**
-- **Node.js 20+**
-- **PostgreSQL 16+**
-- **Redis 7+**
-- **Tesseract OCR**
+- Python 3.11+
+- Node.js 20+
+- PostgreSQL 16+
+- Redis 7+
+- Tesseract OCR
 
-### 1. Jalankan Database & Redis
+### 1. Clone Repository
 
-Gunakan Docker untuk menjalankan PostgreSQL dan Redis saja:
+```bash
+git clone https://github.com/asd412id/docuscan.git
+cd docuscan
+```
+
+### 2. Start Database & Redis
 
 ```bash
 docker-compose -f docker-compose.dev.yml up -d
 ```
 
-Atau install dan jalankan PostgreSQL & Redis secara native.
-
-### 2. Setup Backend
+### 3. Setup Backend
 
 ```bash
 cd backend
 
-# Buat virtual environment
+# Create virtual environment
 python -m venv venv
 
-# Aktifkan virtual environment
+# Activate virtual environment
 # Windows:
 venv\Scripts\activate
 # Linux/Mac:
@@ -71,15 +106,15 @@ source venv/bin/activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Copy dan sesuaikan environment variables
+# Configure environment
 cp .env.example .env
-# Edit .env sesuai konfigurasi lokal
+# Edit .env as needed
 
-# Jalankan backend
+# Run backend
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### 3. Setup Frontend
+### 4. Setup Frontend
 
 ```bash
 cd frontend
@@ -87,105 +122,146 @@ cd frontend
 # Install dependencies
 npm install
 
-# Jalankan development server
+# Run development server
 npm run dev
 ```
 
-### 4. Akses Aplikasi
+### 5. Access Application
 
-- **Frontend**: http://localhost:5173
-- **Backend API**: http://localhost:8000
-- **API Docs (Swagger)**: http://localhost:8000/docs
-- **API Docs (ReDoc)**: http://localhost:8000/redoc
+| Service | URL |
+|---------|-----|
+| Frontend | http://localhost:5173 |
+| Backend API | http://localhost:8000 |
+| API Docs (Swagger) | http://localhost:8000/docs |
+| API Docs (ReDoc) | http://localhost:8000/redoc |
 
 ---
 
-## Production Deployment (Docker)
+## Deployment
 
-### 1. Build dan Jalankan
+### Production with Docker
 
-```bash
-# Set SECRET_KEY untuk production
-export SECRET_KEY=$(openssl rand -hex 32)
+DocuScan uses a secure network architecture where only the frontend (Nginx) is exposed to the internet.
 
-# Build dan jalankan semua services
-docker-compose up -d --build
+```
+[Internet] → [Frontend:80] → [Backend] → [DB/Redis]
+                   ↓
+            (internal only)
 ```
 
-### 2. Akses Aplikasi
+#### 1. Configure Environment
 
-- **Frontend**: http://localhost:3000
-- **Backend API**: http://localhost:8000
+```bash
+# Copy example environment file
+cp .env.example .env
+
+# Generate secure secret key
+# Linux/Mac:
+sed -i "s/your-super-secret-key-change-this-in-production/$(openssl rand -hex 32)/" .env
+
+# Edit other variables as needed
+nano .env
+```
+
+#### 2. Deploy
+
+```bash
+# Standard deployment
+docker-compose up -d --build
+
+# With Celery scheduler (for scheduled tasks)
+docker-compose --profile scheduler up -d --build
+
+# With Flower monitoring dashboard
+docker-compose --profile monitoring up -d --build
+
+# With both
+docker-compose --profile scheduler --profile monitoring up -d --build
+```
+
+#### 3. Access
+
+| Service | URL | Notes |
+|---------|-----|-------|
+| Application | http://localhost | Main entry point |
+| Flower | http://localhost:5555 | Monitoring (localhost only, use SSH tunnel) |
+
+#### Network Security
+
+| Network | Type | Services |
+|---------|------|----------|
+| frontend-network | Public | Frontend only |
+| backend-network | Internal | Frontend ↔ Backend |
+| data-network | Internal | Backend/Celery ↔ DB/Redis |
+| monitoring-network | Internal | Flower ↔ Redis |
 
 ---
 
 ## Environment Variables
 
-### Backend (.env)
+### Required Variables
 
-```env
-# Application
-APP_NAME=DocuScan
-APP_VERSION=1.0.0
-DEBUG=true                    # false untuk production
-ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `SECRET_KEY` | JWT signing key | `openssl rand -hex 32` |
+| `POSTGRES_PASSWORD` | Database password | `secure-password` |
 
-# Security
-SECRET_KEY=your-secret-key    # Ganti dengan key yang aman untuk production
-ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=30
-REFRESH_TOKEN_EXPIRE_DAYS=7
+### Optional Variables
 
-# Database
-DATABASE_URL=postgresql+asyncpg://docuscan:docuscan@localhost:5432/docuscan
+See [`.env.example`](.env.example) for complete list of configurable options including:
 
-# Redis
-REDIS_URL=redis://localhost:6379/0
-
-# File Storage
-UPLOAD_DIR=./uploads
-MAX_UPLOAD_SIZE_MB=20
-FILE_RETENTION_MINUTES=60
-
-# Tesseract OCR
-# Windows: C:/Program Files/Tesseract-OCR/tesseract.exe
-# Linux/Mac: /usr/bin/tesseract
-TESSERACT_CMD=/usr/bin/tesseract
-```
+- Application settings
+- JWT token expiry
+- Database configuration
+- Redis configuration
+- Celery worker settings
+- Rate limiting
+- File upload limits
+- OCR language support
 
 ---
 
-## API Endpoints
+## API Reference
 
 ### Authentication
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/auth/register` | Register user baru |
-| POST | `/api/auth/token` | Login dan dapatkan token |
+| POST | `/api/auth/register` | Register new user |
+| POST | `/api/auth/token` | Login and get token |
 | POST | `/api/auth/refresh` | Refresh access token |
-| GET | `/api/auth/me` | Info user saat ini |
+| GET | `/api/auth/me` | Get current user info |
 | POST | `/api/auth/logout` | Logout |
 
 ### Documents
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/documents/upload` | Upload dokumen |
-| POST | `/api/documents/upload-batch` | Upload batch |
-| GET | `/api/documents/` | List dokumen |
-| GET | `/api/documents/{id}` | Detail dokumen |
-| GET | `/api/documents/{id}/original` | Download original |
-| GET | `/api/documents/{id}/processed` | Download hasil scan |
-| GET | `/api/documents/{id}/thumbnail` | Thumbnail |
-| DELETE | `/api/documents/{id}` | Hapus dokumen |
 
-### Scan
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/scan/detect/{id}` | Deteksi tepi dokumen |
-| POST | `/api/scan/process` | Proses dokumen (crop, enhance) |
-| POST | `/api/scan/ocr/{id}` | Ekstrak teks OCR |
-| POST | `/api/scan/export` | Export ke PDF/gambar |
+| POST | `/api/documents/upload` | Upload document |
+| POST | `/api/documents/upload-batch` | Upload multiple documents |
+| GET | `/api/documents/` | List documents |
+| GET | `/api/documents/{id}` | Get document details |
+| GET | `/api/documents/{id}/original` | Download original |
+| GET | `/api/documents/{id}/processed` | Download processed |
+| GET | `/api/documents/{id}/thumbnail` | Get thumbnail |
+| DELETE | `/api/documents/{id}` | Delete document |
+
+### Scan Processing
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/scan/detect/{id}` | Detect document edges |
+| POST | `/api/scan/process` | Process document (crop, enhance) |
+| POST | `/api/scan/ocr/{id}` | Extract text via OCR |
+| POST | `/api/scan/export` | Export to PDF/image |
 | POST | `/api/scan/batch-process` | Batch processing |
+
+### Background Tasks
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/tasks/{task_id}` | Get task status |
+| DELETE | `/api/tasks/{task_id}` | Cancel task |
 
 ---
 
@@ -195,52 +271,46 @@ TESSERACT_CMD=/usr/bin/tesseract
 docuscan/
 ├── backend/
 │   ├── app/
-│   │   ├── api/              # API routes
-│   │   │   ├── auth.py       # Authentication endpoints
-│   │   │   ├── documents.py  # Document management
-│   │   │   └── scan.py       # Scan processing
+│   │   ├── api/              # API route handlers
 │   │   ├── models/           # SQLAlchemy models
 │   │   ├── schemas/          # Pydantic schemas
 │   │   ├── services/         # Business logic
-│   │   │   ├── auth_service.py
-│   │   │   ├── scanner_service.py
-│   │   │   ├── ocr_service.py
-│   │   │   └── pdf_service.py
+│   │   ├── tasks/            # Celery background tasks
+│   │   ├── utils/            # Utilities (rate limiting, security)
 │   │   ├── config.py         # Configuration
-│   │   ├── database.py       # Database setup
+│   │   ├── database.py       # Database connection
+│   │   ├── celery_app.py     # Celery configuration
 │   │   └── main.py           # FastAPI app
+│   ├── tests/                # Pytest tests
 │   ├── Dockerfile
-│   ├── requirements.txt
-│   └── .env.example
+│   └── requirements.txt
 ├── frontend/
 │   ├── src/
 │   │   ├── components/       # React components
-│   │   │   ├── ui/           # shadcn/ui components
-│   │   │   ├── FileUpload.tsx
-│   │   │   ├── CornerAdjust.tsx
-│   │   │   ├── FilterControls.tsx
-│   │   │   └── Header.tsx
+│   │   │   └── ui/           # shadcn/ui components
 │   │   ├── pages/            # Page components
 │   │   ├── services/         # API services
 │   │   ├── store/            # Zustand stores
+│   │   ├── hooks/            # Custom React hooks
 │   │   ├── i18n/             # Translations (ID + EN)
 │   │   └── types/            # TypeScript types
 │   ├── Dockerfile
-│   ├── nginx.conf
+│   ├── nginx.conf.template
 │   └── package.json
 ├── docker-compose.yml        # Production deployment
-├── docker-compose.dev.yml    # Development (DB + Redis only)
-└── README.md
+├── docker-compose.dev.yml    # Development (DB + Redis)
+├── .env.example              # Environment template
+└── AGENTS.md                 # Coding guidelines
 ```
 
 ---
 
-## Instalasi Tesseract OCR
+## Tesseract OCR Installation
 
 ### Windows
-1. Download installer dari: https://github.com/UB-Mannheim/tesseract/wiki
-2. Install dan catat path instalasi
-3. Update `TESSERACT_CMD` di `.env`:
+1. Download installer: https://github.com/UB-Mannheim/tesseract/wiki
+2. Install and note the installation path
+3. Update `TESSERACT_CMD` in `.env`:
    ```
    TESSERACT_CMD=C:/Program Files/Tesseract-OCR/tesseract.exe
    ```
@@ -258,6 +328,53 @@ brew install tesseract tesseract-lang
 
 ---
 
+## Testing
+
+### Backend Tests
+
+```bash
+cd backend
+
+# Run all tests
+python -m pytest tests/ -v
+
+# Run with coverage
+python -m pytest tests/ -v --cov=app --cov-report=html
+
+# Run specific test file
+python -m pytest tests/test_auth.py -v
+```
+
+### Frontend Type Check
+
+```bash
+cd frontend
+
+# Type check
+npx tsc --noEmit
+
+# Lint
+npm run lint
+```
+
+---
+
+## Contributing
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+---
+
 ## License
 
-MIT
+MIT License - see [LICENSE](LICENSE) for details.
+
+---
+
+<p align="center">
+  Made with ❤️ for document scanning
+</p>
