@@ -51,13 +51,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     UVICORN_WORKERS=${UVICORN_WORKERS}
 
 # Install runtime dependencies
+# Note: libgl1-mesa-glx is deprecated in Debian Trixie+, use libgl1 instead
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # OpenCV dependencies
-    libgl1-mesa-glx \
+    # OpenCV dependencies (libgl1 replaces libgl1-mesa-glx in newer Debian)
+    libgl1 \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
-    libxrender-dev \
+    libxrender1 \
     libgomp1 \
     # Tesseract OCR base
     tesseract-ocr \
