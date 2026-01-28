@@ -104,6 +104,7 @@ export const en = {
     backgroundFailed: 'Background processing failed',
     cancelProcessing: 'Cancel',
     applyingResults: 'Applying results...',
+    uploading: 'Uploading...',
   },
   documents: {
     title: 'My Documents',

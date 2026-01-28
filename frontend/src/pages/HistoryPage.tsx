@@ -219,7 +219,8 @@ export function HistoryPage() {
               <Card key={doc.uuid} className="overflow-hidden group">
                 <div className="relative aspect-[4/3] bg-muted">
                   <ThumbnailImage doc={doc} />
-                  <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                  {/* Action buttons - always visible on mobile, hover on desktop */}
+                  <div className="absolute inset-0 bg-black/50 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
                     <Button size="sm" variant="secondary" onClick={() => handleView(doc)}>
                       <Eye className="w-4 h-4" />
                     </Button>

@@ -106,6 +106,7 @@ export const id: Translations = {
     backgroundFailed: 'Pemrosesan latar belakang gagal',
     cancelProcessing: 'Batalkan',
     applyingResults: 'Menerapkan hasil...',
+    uploading: 'Mengunggah...',
   },
   documents: {
     title: 'Dokumen Saya',

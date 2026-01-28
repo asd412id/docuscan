@@ -64,6 +64,7 @@ export function ScanPage() {
     isProcessing,
     addDocument,
     addDocuments,
+    setDocuments,
     setCurrentDocument,
     removeDocument,
     reorderDocuments,
@@ -245,7 +246,14 @@ export function ScanPage() {
     
     try {
       const uploaded = await documentService.uploadBatch(files);
-      addDocuments(uploaded);
+      
+      // If uploading from upload step (fresh start), replace all documents
+      // Otherwise (addMore from result step), append to existing
+      if (step === 'upload') {
+        setDocuments(uploaded);
+      } else {
+        addDocuments(uploaded);
+      }
       
       if (uploaded.length > 0) {
         setCurrentDocument(uploaded[0]);
@@ -267,7 +275,7 @@ export function ScanPage() {
       setIsProcessing(false);
       setUploadProgress(0);
     }
-  }, [addDocuments, setCurrentDocument, setCorners, setIsProcessing, t]);
+  }, [step, setDocuments, addDocuments, setCurrentDocument, setCorners, setIsProcessing, t]);
 
   const handleDetect = async () => {
     if (!currentDocument) return;
@@ -728,6 +736,8 @@ export function ScanPage() {
             <FileUpload 
               onFilesSelected={handleFilesSelected}
               disabled={isProcessing}
+              isUploading={isProcessing}
+              uploadProgress={uploadProgress}
             />
             {uploadProgress > 0 && (
               <div className="mt-4">

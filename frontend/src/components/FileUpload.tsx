@@ -1,14 +1,17 @@
 import { useCallback, useRef, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { Upload, Camera, X, Plus, Check } from 'lucide-react';
+import { Upload, Camera, X, Plus, Check, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { Progress } from '@/components/ui/progress';
 
 interface FileUploadProps {
   onFilesSelected: (files: File[]) => void;
   multiple?: boolean;
   disabled?: boolean;
+  isUploading?: boolean;
+  uploadProgress?: number;
   className?: string;
 }
 
@@ -24,6 +27,8 @@ export function FileUpload({
   onFilesSelected, 
   multiple = true, 
   disabled = false,
+  isUploading = false,
+  uploadProgress = 0,
   className 
 }: FileUploadProps) {
   const { t } = useTranslation();
@@ -50,7 +55,7 @@ export function FileUpload({
     onDrop,
     accept: ACCEPTED_TYPES,
     multiple,
-    disabled,
+    disabled: disabled || isUploading,
     maxSize: 20 * 1024 * 1024, // 20MB
   });
 
@@ -207,29 +212,40 @@ export function FileUpload({
           'hover:border-primary/50 hover:bg-primary/5',
           isDragActive && 'border-primary bg-primary/10',
           isDragReject && 'border-destructive bg-destructive/10',
-          disabled && 'opacity-50 cursor-not-allowed'
+          (disabled || isUploading) && 'opacity-50 cursor-not-allowed'
         )}
       >
         <input {...getInputProps()} />
         
-        <div className="flex flex-col items-center text-center space-y-3">
-          <Upload className="w-12 h-12 text-muted-foreground" />
-          
-          <div className="space-y-1">
-            <h3 className="text-base font-semibold">
-              {isDragActive 
-                ? t('scan.uploadSubtitle') 
-                : t('scan.uploadTitle')
-              }
-            </h3>
-            <p className="text-sm text-muted-foreground">
-              {t('scan.uploadSubtitle')}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              {t('scan.uploadHint')}
-            </p>
+        {isUploading ? (
+          <div className="flex flex-col items-center text-center space-y-4 w-full max-w-xs">
+            <Loader2 className="w-12 h-12 text-primary animate-spin" />
+            <div className="space-y-2 w-full">
+              <h3 className="text-base font-semibold">{t('scan.uploading')}</h3>
+              <Progress value={uploadProgress} className="w-full" />
+              <p className="text-sm text-muted-foreground">{uploadProgress}%</p>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="flex flex-col items-center text-center space-y-3">
+            <Upload className="w-12 h-12 text-muted-foreground" />
+            
+            <div className="space-y-1">
+              <h3 className="text-base font-semibold">
+                {isDragActive 
+                  ? t('scan.uploadSubtitle') 
+                  : t('scan.uploadTitle')
+                }
+              </h3>
+              <p className="text-sm text-muted-foreground">
+                {t('scan.uploadSubtitle')}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {t('scan.uploadHint')}
+              </p>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Camera Button - More prominent on mobile */}
@@ -239,7 +255,7 @@ export function FileUpload({
           variant="outline"
           size="lg"
           onClick={openCamera}
-          disabled={disabled}
+          disabled={disabled || isUploading}
           className="w-full sm:w-auto"
         >
           <Camera className="w-5 h-5 mr-2" />
