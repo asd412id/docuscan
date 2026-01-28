@@ -28,7 +28,7 @@ export const useAuthStore = create<AuthState>()(
         try {
           await authService.login(username, password);
           const user = await authService.getCurrentUser();
-          set({ user, isAuthenticated: true, isLoading: false });
+          set({ user, isAuthenticated: true, isLoading: false, isInitialized: true });
         } catch (error) {
           set({ isLoading: false });
           throw error;
