@@ -1,7 +1,8 @@
 from pydantic_settings import BaseSettings
 from functools import lru_cache
-from typing import List
+from typing import List, Optional
 import os
+import secrets
 
 
 class Settings(BaseSettings):
@@ -16,6 +17,11 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
+
+    # Trusted proxies for rate limiting (comma-separated CIDR notation)
+    # Example: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+    # If not set, defaults to common private networks
+    trusted_proxies: Optional[str] = None
 
     # Database - default to SQLite for easy development
     database_url: str = "sqlite+aiosqlite:///./docuscan.db"
@@ -35,6 +41,7 @@ class Settings(BaseSettings):
     rate_limit_auth: str = "10/minute"  # Login/register endpoints
     rate_limit_upload: str = "20/minute"  # File upload endpoints
     rate_limit_process: str = "30/minute"  # Processing endpoints
+    rate_limit_download: str = "60/minute"  # File download endpoints
 
     # File Storage
     upload_dir: str = "./uploads"
@@ -51,6 +58,10 @@ class Settings(BaseSettings):
     @property
     def is_sqlite(self) -> bool:
         return "sqlite" in self.database_url.lower()
+
+    def generate_secret_key(self) -> str:
+        """Generate a secure random secret key."""
+        return secrets.token_urlsafe(32)
 
     class Config:
         env_file = ".env"

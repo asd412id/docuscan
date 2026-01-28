@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 import bcrypt
+import secrets
+import logging
 from jose import JWTError, jwt
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -10,6 +12,19 @@ from app.models.models import User
 
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
+
+# Allowed algorithms - explicitly whitelist to prevent algorithm confusion attacks
+ALLOWED_ALGORITHMS = ["HS256", "HS384", "HS512"]
+
+# JWT claims validation options
+JWT_DECODE_OPTIONS = {
+    "verify_signature": True,
+    "verify_exp": True,
+    "verify_nbf": True,
+    "verify_iat": True,
+    "require": ["exp", "iat", "sub", "type"],
+}
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -24,13 +39,29 @@ def get_password_hash(password: str) -> str:
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
+    now = datetime.now(timezone.utc)
     if expires_delta:
-        expire = datetime.now(timezone.utc) + expires_delta
+        expire = now + expires_delta
     else:
-        expire = datetime.now(timezone.utc) + timedelta(
-            minutes=settings.access_token_expire_minutes
-        )
-    to_encode.update({"exp": expire, "type": "access"})
+        expire = now + timedelta(minutes=settings.access_token_expire_minutes)
+
+    # Add security claims
+    to_encode.update(
+        {
+            "exp": expire,
+            "iat": now,
+            "nbf": now,
+            "type": "access",
+            "jti": secrets.token_urlsafe(
+                16
+            ),  # Unique token ID for potential revocation
+        }
+    )
+
+    # Validate algorithm is in allowed list
+    if settings.algorithm not in ALLOWED_ALGORITHMS:
+        raise ValueError(f"Algorithm {settings.algorithm} not allowed")
+
     encoded_jwt = jwt.encode(
         to_encode, settings.secret_key, algorithm=settings.algorithm
     )
@@ -39,10 +70,26 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 
 def create_refresh_token(data: dict) -> str:
     to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + timedelta(
-        days=settings.refresh_token_expire_days
+    now = datetime.now(timezone.utc)
+    expire = now + timedelta(days=settings.refresh_token_expire_days)
+
+    # Add security claims
+    to_encode.update(
+        {
+            "exp": expire,
+            "iat": now,
+            "nbf": now,
+            "type": "refresh",
+            "jti": secrets.token_urlsafe(
+                16
+            ),  # Unique token ID for potential revocation
+        }
     )
-    to_encode.update({"exp": expire, "type": "refresh"})
+
+    # Validate algorithm is in allowed list
+    if settings.algorithm not in ALLOWED_ALGORITHMS:
+        raise ValueError(f"Algorithm {settings.algorithm} not allowed")
+
     encoded_jwt = jwt.encode(
         to_encode, settings.secret_key, algorithm=settings.algorithm
     )
@@ -50,12 +97,47 @@ def create_refresh_token(data: dict) -> str:
 
 
 def decode_token(token: str) -> Optional[dict]:
+    """
+    Decode and validate JWT token with security checks.
+
+    Security measures:
+    - Validates algorithm is in allowed list (prevents algorithm confusion attacks)
+    - Validates signature
+    - Validates expiration (exp)
+    - Validates not-before (nbf)
+    - Validates issued-at (iat)
+    - Requires specific claims to be present
+    """
     try:
+        # Validate algorithm is in allowed list
+        if settings.algorithm not in ALLOWED_ALGORITHMS:
+            logger.warning(f"Algorithm {settings.algorithm} not in allowed list")
+            return None
+
+        # Decode with strict validation
         payload = jwt.decode(
-            token, settings.secret_key, algorithms=[settings.algorithm]
+            token,
+            settings.secret_key,
+            algorithms=[settings.algorithm],  # Only allow configured algorithm
+            options=JWT_DECODE_OPTIONS,
         )
+
+        # Additional validation: check token type is present
+        if "type" not in payload:
+            logger.warning("Token missing type claim")
+            return None
+
+        # Validate type is expected value
+        if payload.get("type") not in ["access", "refresh"]:
+            logger.warning(f"Invalid token type: {payload.get('type')}")
+            return None
+
         return payload
-    except JWTError:
+    except JWTError as e:
+        logger.debug(f"JWT decode error: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Unexpected error decoding token: {e}")
         return None
 
 

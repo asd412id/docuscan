@@ -8,6 +8,7 @@ import os
 import uuid
 import shutil
 import aiofiles
+import logging
 
 from app.database import get_db
 from app.config import get_settings
@@ -19,12 +20,20 @@ from app.schemas.schemas import (
 )
 from app.models.models import User, Document
 from app.api.auth import get_current_user
-from app.utils.security import validate_path_within_directory
+from app.utils.security import (
+    validate_path_within_directory,
+    validate_file_extension,
+    get_safe_file_extension,
+    sanitize_filename,
+    sanitize_filename_for_header,
+    validate_uploaded_file_magic_bytes,
+)
 from app.utils.rate_limit import limiter
 
 
 router = APIRouter()
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 ALLOWED_MIME_TYPES = [
     "image/jpeg",
@@ -89,30 +98,8 @@ async def upload_document(
             detail=f"File type not allowed. Allowed types: {', '.join(ALLOWED_MIME_TYPES)}",
         )
 
-    # Read file content
-    content = await file.read()
-    file_size = len(content)
-
-    # Validate file size
-    max_size = settings.max_upload_size_mb * 1024 * 1024
-    if file_size > max_size:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"File too large. Maximum size: {settings.max_upload_size_mb}MB",
-        )
-
-    # If client sent a generic/empty content-type, infer from extension after reading
-    if mime_type == "application/octet-stream":
-        mime_type = normalize_mime_type(None, file.filename or "image.jpg")
-
-    if mime_type not in ALLOWED_MIME_TYPES:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"File type not allowed. Allowed types: {', '.join(ALLOWED_MIME_TYPES)}",
-        )
-
-    # Generate unique filename
-    file_ext = os.path.splitext(file.filename or "image.jpg")[1] or ".jpg"
+    # Generate unique filename with validated extension
+    file_ext = get_safe_file_extension(file.filename or "image.jpg", default=".jpg")
     stored_filename = f"{uuid.uuid4()}{file_ext}"
 
     # Create user directory
@@ -120,10 +107,70 @@ async def upload_document(
     os.makedirs(user_dir, exist_ok=True)
 
     file_path = os.path.join(user_dir, stored_filename)
+    max_size = settings.max_upload_size_mb * 1024 * 1024
 
-    # Save file
-    async with aiofiles.open(file_path, "wb") as f:
-        await f.write(content)
+    # Stream file to disk in chunks to avoid loading entire file into memory
+    file_size = 0
+    try:
+        async with aiofiles.open(file_path, "wb") as f:
+            while True:
+                chunk = await file.read(64 * 1024)  # 64KB chunks
+                if not chunk:
+                    break
+                file_size += len(chunk)
+                if file_size > max_size:
+                    # Clean up partial file and raise error
+                    await f.close()
+                    os.remove(file_path)
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"File too large. Maximum size: {settings.max_upload_size_mb}MB",
+                    )
+                await f.write(chunk)
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Clean up on any error
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        logger.error(f"Error writing file: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to save file",
+        )
+
+    # If client sent a generic/empty content-type, infer from extension after reading
+    if mime_type == "application/octet-stream":
+        mime_type = normalize_mime_type(None, file.filename or "image.jpg")
+
+    if mime_type not in ALLOWED_MIME_TYPES:
+        os.remove(file_path)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File type not allowed. Allowed types: {', '.join(ALLOWED_MIME_TYPES)}",
+        )
+
+    # Validate magic bytes match claimed file extension
+    try:
+        async with aiofiles.open(file_path, "rb") as f:
+            header_bytes = await f.read(32)  # Read first 32 bytes for magic validation
+        is_valid_magic, magic_error = await validate_uploaded_file_magic_bytes(
+            header_bytes, file.filename or "image.jpg"
+        )
+        if not is_valid_magic:
+            os.remove(file_path)
+            logger.warning(
+                f"Magic bytes validation failed for {file.filename}: {magic_error}"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"File content does not match claimed type: {magic_error}",
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        # If magic validation fails unexpectedly, log but allow (fallback to MIME check)
+        logger.warning(f"Magic bytes validation error: {e}")
 
     # Calculate expiration
     expires_at = datetime.now(timezone.utc) + timedelta(
@@ -179,6 +226,7 @@ async def upload_documents_batch(
     documents = []
     user_dir = os.path.join(settings.upload_dir, str(current_user.uuid))
     os.makedirs(user_dir, exist_ok=True)
+    max_size = settings.max_upload_size_mb * 1024 * 1024
 
     for file in files:
         # Normalize and validate file type (handle camera photo edge cases)
@@ -187,25 +235,61 @@ async def upload_documents_batch(
         if mime_type not in ALLOWED_MIME_TYPES:
             continue  # Skip invalid files
 
-        content = await file.read()
-        file_size = len(content)
-
-        max_size = settings.max_upload_size_mb * 1024 * 1024
-        if file_size > max_size:
-            continue  # Skip oversized files
-
         if mime_type == "application/octet-stream":
             mime_type = normalize_mime_type(None, file.filename or "image.jpg")
 
         if mime_type not in ALLOWED_MIME_TYPES:
             continue
 
-        file_ext = os.path.splitext(file.filename or "image.jpg")[1] or ".jpg"
+        # Validate file extension (security whitelist)
+        is_valid_ext, _ = validate_file_extension(file.filename or "image.jpg")
+        if not is_valid_ext:
+            logger.warning(f"Invalid file extension blocked: {file.filename}")
+            continue
+
+        file_ext = get_safe_file_extension(file.filename or "image.jpg", default=".jpg")
         stored_filename = f"{uuid.uuid4()}{file_ext}"
         file_path = os.path.join(user_dir, stored_filename)
 
-        async with aiofiles.open(file_path, "wb") as f:
-            await f.write(content)
+        # Stream file to disk in chunks
+        file_size = 0
+        try:
+            async with aiofiles.open(file_path, "wb") as f:
+                while True:
+                    chunk = await file.read(64 * 1024)  # 64KB chunks
+                    if not chunk:
+                        break
+                    file_size += len(chunk)
+                    if file_size > max_size:
+                        await f.close()
+                        os.remove(file_path)
+                        break  # Skip oversized file
+                    await f.write(chunk)
+
+            if file_size > max_size:
+                continue  # Skip this file, already cleaned up
+
+            # Validate magic bytes match claimed file extension
+            async with aiofiles.open(file_path, "rb") as f:
+                header_bytes = await f.read(32)
+            is_valid_magic, magic_error = await validate_uploaded_file_magic_bytes(
+                header_bytes, file.filename or "image.jpg"
+            )
+            if not is_valid_magic:
+                os.remove(file_path)
+                logger.warning(
+                    f"Magic bytes validation failed for {file.filename}: {magic_error}"
+                )
+                continue  # Skip invalid file
+        except Exception as e:
+            # Clean up on error and skip this file
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except OSError:
+                    pass
+            logger.error(f"Error writing file {file.filename}: {e}")
+            continue
 
         expires_at = datetime.now(timezone.utc) + timedelta(
             minutes=settings.file_retention_minutes
@@ -335,7 +419,9 @@ async def get_document(
 
 
 @router.get("/{document_uuid}/original")
+@limiter.limit(settings.rate_limit_download)
 async def get_original_image(
+    request: Request,
     document_uuid: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -364,15 +450,20 @@ async def get_original_image(
             status_code=status.HTTP_403_FORBIDDEN, detail="Access denied"
         )
 
+    # Sanitize filename for Content-Disposition header
+    safe_filename = sanitize_filename_for_header(document.original_filename)
+
     return FileResponse(
         document.file_path,
         media_type=document.mime_type,
-        filename=document.original_filename,
+        filename=safe_filename,
     )
 
 
 @router.get("/{document_uuid}/processed")
+@limiter.limit(settings.rate_limit_download)
 async def get_processed_image(
+    request: Request,
     document_uuid: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -401,15 +492,22 @@ async def get_processed_image(
             status_code=status.HTTP_403_FORBIDDEN, detail="Access denied"
         )
 
+    # Sanitize filename for Content-Disposition header
+    safe_filename = sanitize_filename_for_header(
+        f"scanned_{document.original_filename}"
+    )
+
     return FileResponse(
         document.processed_path,
         media_type="image/jpeg",
-        filename=f"scanned_{document.original_filename}",
+        filename=safe_filename,
     )
 
 
 @router.get("/{document_uuid}/thumbnail")
+@limiter.limit(settings.rate_limit_download)
 async def get_thumbnail(
+    request: Request,
     document_uuid: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -438,15 +536,20 @@ async def get_thumbnail(
             status_code=status.HTTP_403_FORBIDDEN, detail="Access denied"
         )
 
+    # Sanitize filename for Content-Disposition header
+    safe_filename = sanitize_filename_for_header(f"thumb_{document.original_filename}")
+
     return FileResponse(
         document.thumbnail_path,
         media_type="image/jpeg",
-        filename=f"thumb_{document.original_filename}",
+        filename=safe_filename,
     )
 
 
 @router.get("/{document_uuid}/preview")
+@limiter.limit(settings.rate_limit_download)
 async def get_preview_image(
+    request: Request,
     document_uuid: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -480,10 +583,15 @@ async def get_preview_image(
             status_code=status.HTTP_403_FORBIDDEN, detail="Access denied"
         )
 
+    # Sanitize filename for Content-Disposition header
+    safe_filename = sanitize_filename_for_header(
+        f"preview_{document.original_filename}"
+    )
+
     return FileResponse(
         preview_path,
         media_type="image/jpeg",
-        filename=f"preview_{document.original_filename}",
+        filename=safe_filename,
     )
 
 

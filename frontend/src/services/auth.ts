@@ -1,4 +1,4 @@
-import api from './api';
+import api, { setAccessToken, clearAccessToken, hasAccessToken } from './api';
 import type { AuthTokens, User } from '@/types';
 
 export const authService = {
@@ -11,8 +11,11 @@ export const authService = {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     });
     
-    localStorage.setItem('access_token', response.data.access_token);
-    localStorage.setItem('refresh_token', response.data.refresh_token);
+    // Store access token securely (in memory + localStorage for persistence)
+    setAccessToken(response.data.access_token);
+    
+    // Refresh token is stored in httpOnly cookie by the server automatically
+    // It's not accessible via JavaScript (XSS protection)
     
     return response.data;
   },
@@ -41,11 +44,10 @@ export const authService = {
   },
   
   clearTokens(): void {
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('refresh_token');
+    clearAccessToken();
   },
   
   isAuthenticated(): boolean {
-    return !!localStorage.getItem('access_token');
+    return hasAccessToken();
   },
 };

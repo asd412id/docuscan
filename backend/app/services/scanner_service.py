@@ -8,6 +8,16 @@ import numpy as np
 from typing import List, Optional, Tuple
 import math
 
+# Pillow decompression bomb protection
+# Limit to ~178 megapixels (approximately 13000x13000 pixels)
+# This prevents denial-of-service attacks via maliciously crafted images
+try:
+    from PIL import Image
+
+    Image.MAX_IMAGE_PIXELS = 178956970
+except ImportError:
+    pass
+
 
 def angle_cos(p0, p1, p2):
     """Calculate cosine of angle at p1 formed by p0-p1-p2."""

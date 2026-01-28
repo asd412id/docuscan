@@ -7,6 +7,7 @@ import os
 import json
 import cv2
 import numpy as np
+import logging
 from celery import shared_task
 from typing import Optional, List, Dict, Any
 import redis
@@ -17,6 +18,7 @@ from app.services.ocr_service import ocr_service
 from app.services.pdf_service import pdf_service
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 # Redis client for progress updates
 _redis_client = None
@@ -53,7 +55,7 @@ def update_task_progress(
         # Publish to channel for real-time updates
         client.publish(f"task_updates:{task_id}", json.dumps(progress_data))
     except Exception as e:
-        print(f"Failed to update progress: {e}")
+        logger.error(f"Failed to update progress: {e}")
 
 
 @shared_task(bind=True, name="process_single_document")

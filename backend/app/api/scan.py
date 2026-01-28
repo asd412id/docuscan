@@ -10,6 +10,7 @@ import cv2
 import numpy as np
 import zipfile
 import shutil
+import logging
 
 from app.database import get_db
 from app.config import get_settings
@@ -22,6 +23,8 @@ from app.schemas.schemas import (
     ExportResponse,
     CornerPoints,
     BulkProcessRequest,
+    BulkProcessResponse,
+    BulkProcessResultItem,
 )
 from app.models.models import User, Document
 from app.api.auth import get_current_user
@@ -30,6 +33,7 @@ from app.services.ocr_service import ocr_service
 from app.services.pdf_service import pdf_service
 from app.utils.security import (
     sanitize_filename,
+    sanitize_filename_for_header,
     get_safe_path,
     validate_path_within_directory,
 )
@@ -38,6 +42,7 @@ from app.utils.rate_limit import limiter
 
 router = APIRouter()
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 @router.post("/detect/{document_uuid}", response_model=DetectResponse)
@@ -472,8 +477,12 @@ async def export_documents(
 
 
 @router.get("/download/{user_uuid}/{filename}")
+@limiter.limit(settings.rate_limit_download)
 async def download_export(
-    user_uuid: str, filename: str, current_user: User = Depends(get_current_user)
+    request: Request,
+    user_uuid: str,
+    filename: str,
+    current_user: User = Depends(get_current_user),
 ):
     """
     Download exported file.
@@ -512,15 +521,18 @@ async def download_export(
     else:
         media_type = "application/octet-stream"
 
+    # Sanitize filename for Content-Disposition header
+    safe_filename = sanitize_filename_for_header(filename)
+
     return FileResponse(
         export_path,
         media_type=media_type,
-        filename=filename,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        filename=safe_filename,
+        headers={"Content-Disposition": f'attachment; filename="{safe_filename}"'},
     )
 
 
-@router.post("/bulk-process", response_model=List[ProcessResponse])
+@router.post("/bulk-process", response_model=BulkProcessResponse)
 @limiter.limit(settings.rate_limit_process)
 async def bulk_process_documents(
     request: Request,
@@ -531,6 +543,7 @@ async def bulk_process_documents(
     """
     Process multiple documents in bulk.
     Each document can have its own corners and settings, or use defaults.
+    Returns detailed results with error reporting for each document.
     """
     doc_uuids = [item.document_uuid for item in bulk_request.documents]
 
@@ -541,81 +554,151 @@ async def bulk_process_documents(
     )
     documents = {doc.uuid: doc for doc in result.scalars().all()}
 
-    responses = []
+    results: List[BulkProcessResultItem] = []
+    successful = 0
+    failed = 0
 
     for item in bulk_request.documents:
         document = documents.get(item.document_uuid)
-        if not document or not os.path.exists(document.file_path):
+
+        # Check if document exists
+        if not document:
+            logger.warning(f"Document not found: {item.document_uuid}")
+            results.append(
+                BulkProcessResultItem(
+                    document_uuid=item.document_uuid,
+                    success=False,
+                    status="failed",
+                    error="Document not found or access denied",
+                )
+            )
+            failed += 1
             continue
 
+        # Check if file exists
+        if not os.path.exists(document.file_path):
+            logger.warning(f"File not found for document: {item.document_uuid}")
+            results.append(
+                BulkProcessResultItem(
+                    document_uuid=item.document_uuid,
+                    success=False,
+                    status="failed",
+                    error="Original file not found",
+                )
+            )
+            failed += 1
+            continue
+
+        # Try to read the image
         image = cv2.imread(document.file_path)
         if image is None:
+            logger.warning(f"Could not read image: {document.file_path}")
+            results.append(
+                BulkProcessResultItem(
+                    document_uuid=item.document_uuid,
+                    success=False,
+                    status="failed",
+                    error="Could not read image file",
+                )
+            )
+            failed += 1
             continue
 
-        # Use item-specific settings or default
-        doc_settings = item.settings or bulk_request.default_settings
+        try:
+            # Use item-specific settings or default
+            doc_settings = item.settings or bulk_request.default_settings
 
-        # Get corners (item-specific or auto-detect)
-        if item.corners:
-            corners = np.array(
-                [
-                    item.corners.top_left,
-                    item.corners.top_right,
-                    item.corners.bottom_right,
-                    item.corners.bottom_left,
-                ],
-                dtype=np.float32,
-            )
-        else:
-            corners = scanner.detect_document_edges(image)
-            if corners is None:
-                height, width = image.shape[:2]
+            # Get corners (item-specific or auto-detect)
+            if item.corners:
                 corners = np.array(
-                    [[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]],
+                    [
+                        item.corners.top_left,
+                        item.corners.top_right,
+                        item.corners.bottom_right,
+                        item.corners.bottom_left,
+                    ],
                     dtype=np.float32,
                 )
+            else:
+                corners = scanner.detect_document_edges(image)
+                if corners is None:
+                    height, width = image.shape[:2]
+                    corners = np.array(
+                        [
+                            [0, 0],
+                            [width - 1, 0],
+                            [width - 1, height - 1],
+                            [0, height - 1],
+                        ],
+                        dtype=np.float32,
+                    )
 
-        warped = scanner.perspective_transform(image, corners)
+            warped = scanner.perspective_transform(image, corners)
 
-        if doc_settings.rotation > 0:
-            warped = scanner.rotate_image(warped, doc_settings.rotation)
+            if doc_settings.rotation > 0:
+                warped = scanner.rotate_image(warped, doc_settings.rotation)
 
-        enhanced = scanner.enhance_scan(
-            warped,
-            mode=doc_settings.filter_mode,
-            brightness=doc_settings.brightness,
-            contrast=doc_settings.contrast,
-            auto_enhance=doc_settings.auto_enhance,
-        )
-
-        processed_filename = f"processed_{document.stored_filename}"
-        processed_path = os.path.join(
-            os.path.dirname(document.file_path), processed_filename
-        )
-        if not cv2.imwrite(processed_path, enhanced, [cv2.IMWRITE_JPEG_QUALITY, 95]):
-            continue
-
-        thumbnail = scanner.create_thumbnail(enhanced)
-        thumbnail_filename = f"thumb_{document.stored_filename}"
-        thumbnail_path = os.path.join(
-            os.path.dirname(document.file_path), thumbnail_filename
-        )
-        if not cv2.imwrite(thumbnail_path, thumbnail):
-            continue
-
-        document.processed_path = processed_path
-        document.thumbnail_path = thumbnail_path
-        document.status = "completed"
-
-        responses.append(
-            ProcessResponse(
-                document_uuid=document.uuid,
-                processed_url=f"/api/documents/{document.uuid}/processed",
-                thumbnail_url=f"/api/documents/{document.uuid}/thumbnail",
-                status="completed",
+            enhanced = scanner.enhance_scan(
+                warped,
+                mode=doc_settings.filter_mode,
+                brightness=doc_settings.brightness,
+                contrast=doc_settings.contrast,
+                auto_enhance=doc_settings.auto_enhance,
             )
-        )
+
+            # Save processed image
+            processed_filename = f"processed_{document.stored_filename}"
+            processed_path = os.path.join(
+                os.path.dirname(document.file_path), processed_filename
+            )
+            if not cv2.imwrite(
+                processed_path, enhanced, [cv2.IMWRITE_JPEG_QUALITY, 95]
+            ):
+                raise IOError("Failed to write processed image")
+
+            # Create thumbnail
+            thumbnail = scanner.create_thumbnail(enhanced)
+            thumbnail_filename = f"thumb_{document.stored_filename}"
+            thumbnail_path = os.path.join(
+                os.path.dirname(document.file_path), thumbnail_filename
+            )
+            if not cv2.imwrite(thumbnail_path, thumbnail):
+                raise IOError("Failed to write thumbnail")
+
+            # Update document
+            document.processed_path = processed_path
+            document.thumbnail_path = thumbnail_path
+            document.status = "completed"
+
+            results.append(
+                BulkProcessResultItem(
+                    document_uuid=document.uuid,
+                    success=True,
+                    processed_url=f"/api/documents/{document.uuid}/processed",
+                    thumbnail_url=f"/api/documents/{document.uuid}/thumbnail",
+                    status="completed",
+                )
+            )
+            successful += 1
+
+        except Exception as e:
+            logger.error(f"Error processing document {item.document_uuid}: {e}")
+            document.status = "failed"
+            results.append(
+                BulkProcessResultItem(
+                    document_uuid=item.document_uuid,
+                    success=False,
+                    status="failed",
+                    error=str(e) if settings.debug else "Processing failed",
+                )
+            )
+            failed += 1
 
     await db.flush()
 
-    return responses
+    return BulkProcessResponse(
+        results=results,
+        total_requested=len(bulk_request.documents),
+        successful=successful,
+        failed=failed,
+    )

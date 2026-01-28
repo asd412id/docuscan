@@ -4,6 +4,8 @@ import pytest
 from httpx import AsyncClient
 import io
 
+from app.utils.security import CSRF_HEADER_NAME
+
 
 class TestDocumentUpload:
     """Test document upload functionality."""
@@ -12,7 +14,12 @@ class TestDocumentUpload:
         """Test upload requires authentication."""
         # Create a simple test image
         files = {"file": ("test.jpg", b"fake image content", "image/jpeg")}
-        response = await client.post("/api/documents/upload", files=files)
+        # Include CSRF token for POST request
+        csrf_token = getattr(client, "csrf_token", None)
+        headers = {CSRF_HEADER_NAME: csrf_token} if csrf_token else {}
+        response = await client.post(
+            "/api/documents/upload", files=files, headers=headers
+        )
         assert response.status_code == 401
 
     async def test_upload_invalid_file_type(self, authenticated_client):

@@ -7,6 +7,8 @@ import pytest
 from httpx import AsyncClient
 from unittest.mock import patch, MagicMock
 
+from app.utils.security import CSRF_HEADER_NAME
+
 
 class TestTasksAPI:
     """Test task management endpoints."""
@@ -60,18 +62,25 @@ class TestTasksAPI:
     @pytest.mark.asyncio
     async def test_task_endpoints_require_authentication(self, client: AsyncClient):
         """Test that task endpoints require authentication."""
+        # Include CSRF token for POST requests
+        csrf_token = getattr(client, "csrf_token", None)
+        csrf_headers = {CSRF_HEADER_NAME: csrf_token} if csrf_token else {}
+
         # Test process endpoint
-        response = await client.post("/api/tasks/process/test-uuid")
+        response = await client.post(
+            "/api/tasks/process/test-uuid", headers=csrf_headers
+        )
         assert response.status_code == 401
 
         # Test bulk process endpoint
         response = await client.post(
             "/api/tasks/bulk-process",
             json={"documents": []},
+            headers=csrf_headers,
         )
         assert response.status_code == 401
 
-        # Test status endpoint
+        # Test status endpoint (GET - no CSRF needed)
         response = await client.get("/api/tasks/status/test-task-id")
         assert response.status_code == 401
 

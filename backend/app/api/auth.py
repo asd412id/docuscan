@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Annotated
+from typing import Annotated, Optional
+import logging
 
 from app.database import get_db
 from app.schemas.schemas import (
@@ -27,9 +28,68 @@ from app.utils.rate_limit import limiter
 from app.config import get_settings
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
+
+# Cookie configuration for security
+REFRESH_TOKEN_COOKIE_NAME = "refresh_token"
+COOKIE_MAX_AGE = settings.refresh_token_expire_days * 24 * 60 * 60  # days to seconds
+COOKIE_SECURE = not settings.debug  # Only secure in production
+COOKIE_HTTPONLY = True
+COOKIE_SAMESITE = (
+    "lax"  # "lax" allows top-level navigations, "strict" for maximum security
+)
+
+
+class OAuth2PasswordBearerWithCookie(OAuth2PasswordBearer):
+    """
+    Custom OAuth2 scheme that also checks for refresh token in cookies.
+    This supports both Authorization header (for access token) and cookies (for refresh token).
+    """
+
+    async def __call__(self, request: Request) -> Optional[str]:
+        # First try to get token from Authorization header
+        authorization = request.headers.get("Authorization")
+        if authorization:
+            scheme, _, token = authorization.partition(" ")
+            if scheme.lower() == "bearer" and token:
+                return token
+
+        # If no Authorization header, this will raise the appropriate error
+        return await super().__call__(request)
+
+
+oauth2_scheme = OAuth2PasswordBearerWithCookie(tokenUrl="/api/auth/token")
+
+
+def set_refresh_token_cookie(response: Response, refresh_token: str) -> None:
+    """Set refresh token as httpOnly secure cookie."""
+    response.set_cookie(
+        key=REFRESH_TOKEN_COOKIE_NAME,
+        value=refresh_token,
+        max_age=COOKIE_MAX_AGE,
+        httponly=COOKIE_HTTPONLY,
+        secure=COOKIE_SECURE,
+        samesite=COOKIE_SAMESITE,
+        path="/api/auth",  # Only send cookie to auth endpoints
+    )
+
+
+def clear_refresh_token_cookie(response: Response) -> None:
+    """Clear the refresh token cookie."""
+    response.delete_cookie(
+        key=REFRESH_TOKEN_COOKIE_NAME,
+        path="/api/auth",
+        httponly=COOKIE_HTTPONLY,
+        secure=COOKIE_SECURE,
+        samesite=COOKIE_SAMESITE,
+    )
+
+
+def get_refresh_token_from_cookie(request: Request) -> Optional[str]:
+    """Get refresh token from cookie if present."""
+    return request.cookies.get(REFRESH_TOKEN_COOKIE_NAME)
 
 
 async def get_current_user(
@@ -103,10 +163,17 @@ async def register(
 @limiter.limit(settings.rate_limit_auth)
 async def login(
     request: Request,
+    response: Response,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     db: AsyncSession = Depends(get_db),
 ):
-    """Login and get access token."""
+    """
+    Login and get access token.
+
+    Returns access_token in response body and sets refresh_token as httpOnly cookie.
+    This provides security against XSS attacks as the refresh token cannot be accessed
+    via JavaScript.
+    """
     user = await authenticate_user(db, form_data.username, form_data.password)
     if not user:
         raise HTTPException(
@@ -118,21 +185,42 @@ async def login(
     access_token = create_access_token(data={"sub": user.username})
     refresh_token = create_refresh_token(data={"sub": user.username})
 
-    return Token(
-        access_token=access_token, refresh_token=refresh_token, token_type="bearer"
-    )
+    # Set refresh token as httpOnly cookie (not accessible via JavaScript)
+    set_refresh_token_cookie(response, refresh_token)
+
+    # Only return access token in body - refresh token is stored in httpOnly cookie only
+    # This prevents XSS attacks from stealing refresh tokens
+    return Token(access_token=access_token, token_type="bearer")
 
 
 @router.post("/refresh", response_model=Token)
 @limiter.limit(settings.rate_limit_auth)
 async def refresh_token(
     request: Request,
-    token_request: RefreshTokenRequest,
+    response: Response,
+    token_request: Optional[RefreshTokenRequest] = None,
     db: AsyncSession = Depends(get_db),
 ):
-    """Refresh access token using refresh token."""
-    payload = decode_token(token_request.refresh_token)
+    """
+    Refresh access token using refresh token from httpOnly cookie.
+
+    The refresh token is read from the httpOnly cookie (set during login).
+    A new access token is returned and a new refresh token is set in the cookie
+    (token rotation for security).
+    """
+    # Get refresh token from httpOnly cookie only (more secure)
+    refresh_token_value = get_refresh_token_from_cookie(request)
+
+    if not refresh_token_value:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token required",
+        )
+
+    payload = decode_token(refresh_token_value)
     if payload is None or payload.get("type") != "refresh":
+        # Clear invalid cookie if present
+        clear_refresh_token_cookie(response)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token"
         )
@@ -140,6 +228,7 @@ async def refresh_token(
     username = payload.get("sub")
     user = await get_user_by_username(db, username)
     if not user or not user.is_active:
+        clear_refresh_token_cookie(response)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or inactive",
@@ -148,9 +237,11 @@ async def refresh_token(
     access_token = create_access_token(data={"sub": user.username})
     new_refresh_token = create_refresh_token(data={"sub": user.username})
 
-    return Token(
-        access_token=access_token, refresh_token=new_refresh_token, token_type="bearer"
-    )
+    # Update refresh token cookie with new token (token rotation)
+    set_refresh_token_cookie(response, new_refresh_token)
+
+    # Only return access token - new refresh token is in httpOnly cookie only
+    return Token(access_token=access_token, token_type="bearer")
 
 
 @router.get("/me", response_model=UserResponse)
@@ -162,7 +253,18 @@ async def get_current_user_info(
 
 
 @router.post("/logout", response_model=MessageResponse)
-async def logout(current_user: Annotated[User, Depends(get_current_user)]):
-    """Logout user (client should discard tokens)."""
-    # In a production app, you might want to blacklist the token
+async def logout(
+    response: Response,
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """
+    Logout user.
+
+    Clears the refresh token cookie. The client should also discard
+    the access token from memory.
+    """
+    # Clear the refresh token cookie
+    clear_refresh_token_cookie(response)
+
+    logger.info(f"User {current_user.username} logged out")
     return MessageResponse(message="Successfully logged out")

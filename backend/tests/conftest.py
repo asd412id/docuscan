@@ -15,6 +15,7 @@ os.environ["RATE_LIMIT_ENABLED"] = "false"
 
 from app.main import app
 from app.database import Base, get_db
+from app.utils.security import generate_csrf_token, CSRF_COOKIE_NAME, CSRF_HEADER_NAME
 
 
 # Test database engine
@@ -62,11 +63,23 @@ async def setup_database():
 
 
 @pytest.fixture
-async def client() -> AsyncGenerator[AsyncClient, None]:
-    """Create test client."""
+def csrf_token() -> str:
+    """Generate a CSRF token for tests."""
+    return generate_csrf_token()
+
+
+@pytest.fixture
+async def client(csrf_token: str) -> AsyncGenerator[AsyncClient, None]:
+    """Create test client with CSRF token."""
     app.dependency_overrides[get_db] = override_get_db
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        cookies={CSRF_COOKIE_NAME: csrf_token},
+    ) as ac:
+        # Store CSRF token for use in requests
+        ac.csrf_token = csrf_token
         yield ac
     app.dependency_overrides.clear()
 
@@ -99,8 +112,15 @@ async def authenticated_client(client: AsyncClient) -> AsyncGenerator[dict, None
     )
     tokens = response.json()
 
+    # Include CSRF token in headers for state-changing requests
+    csrf_token = getattr(client, "csrf_token", generate_csrf_token())
+
     yield {
         "client": client,
         "tokens": tokens,
-        "headers": {"Authorization": f"Bearer {tokens['access_token']}"},
+        "headers": {
+            "Authorization": f"Bearer {tokens['access_token']}",
+            CSRF_HEADER_NAME: csrf_token,
+        },
+        "csrf_token": csrf_token,
     }

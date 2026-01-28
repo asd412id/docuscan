@@ -87,8 +87,12 @@ class TestAuthLogin:
         assert response.status_code == 200
         data = response.json()
         assert "access_token" in data
-        assert "refresh_token" in data
         assert data["token_type"] == "bearer"
+        # refresh_token is no longer in JSON response (security fix)
+        # It's now sent via httpOnly cookie
+        assert "refresh_token" not in data
+        # Check that refresh_token cookie was set
+        assert "refresh_token" in response.cookies
 
     async def test_login_invalid_password(self, client: AsyncClient):
         """Test login with invalid password."""
@@ -141,17 +145,41 @@ class TestAuthMe:
 class TestAuthRefresh:
     """Test token refresh."""
 
-    async def test_refresh_token_success(self, authenticated_client):
-        """Test successful token refresh."""
-        client = authenticated_client["client"]
-        refresh_token = authenticated_client["tokens"]["refresh_token"]
+    async def test_refresh_token_success(self, client: AsyncClient):
+        """Test successful token refresh using httpOnly cookie."""
+        # Register user
+        await client.post(
+            "/api/auth/register",
+            json={
+                "email": "refresh@example.com",
+                "username": "refreshuser",
+                "password": "password123",
+            },
+        )
 
+        # Login to get refresh token cookie
+        login_response = await client.post(
+            "/api/auth/token",
+            data={"username": "refreshuser", "password": "password123"},
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        assert login_response.status_code == 200
+
+        # Extract refresh token cookie
+        refresh_token = login_response.cookies.get("refresh_token")
+        assert refresh_token is not None, "refresh_token cookie should be set"
+
+        # Use refresh token to get new access token
+        # Pass the cookie explicitly since httpx with ASGITransport may not persist it
         response = await client.post(
-            "/api/auth/refresh", json={"refresh_token": refresh_token}
+            "/api/auth/refresh",
+            cookies={"refresh_token": refresh_token},
         )
         assert response.status_code == 200
         data = response.json()
         assert "access_token" in data
+        # New refresh token is also set via cookie, not in JSON
+        assert "refresh_token" not in data
 
     async def test_refresh_token_invalid(self, client: AsyncClient):
         """Test refresh with invalid token."""

@@ -38,6 +38,13 @@ class UserUpdate(BaseModel):
 # ============ Token Schemas ============
 class Token(BaseModel):
     access_token: str
+    token_type: str = "bearer"
+
+
+class TokenWithRefresh(BaseModel):
+    """Token response that includes refresh token (for backward compatibility only)."""
+
+    access_token: str
     refresh_token: str
     token_type: str = "bearer"
 
@@ -123,6 +130,26 @@ class ProcessResponse(BaseModel):
     processed_url: str
     thumbnail_url: str
     status: str
+
+
+class BulkProcessResultItem(BaseModel):
+    """Individual result for bulk processing with error details."""
+
+    document_uuid: str
+    success: bool
+    processed_url: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    status: str
+    error: Optional[str] = None
+
+
+class BulkProcessResponse(BaseModel):
+    """Response for bulk document processing with error reporting."""
+
+    results: List[BulkProcessResultItem]
+    total_requested: int
+    successful: int
+    failed: int
 
 
 class OCRResponse(BaseModel):

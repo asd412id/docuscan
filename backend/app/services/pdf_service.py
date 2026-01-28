@@ -10,6 +10,11 @@ import os
 from typing import List, Optional, Tuple, Dict
 import tempfile
 
+# Pillow decompression bomb protection
+# Limit to ~178 megapixels (approximately 13000x13000 pixels)
+# This prevents denial-of-service attacks via maliciously crafted images
+Image.MAX_IMAGE_PIXELS = 178956970
+
 
 # Custom page sizes not in reportlab
 # Folio/F4: 8.5 x 13 inches (215.9 x 330.2 mm)
@@ -74,62 +79,72 @@ class PDFService:
         # ReportLab canvas doesn't support changing page size, so we create temp PDFs and merge
 
         temp_pdfs = []
+        optimized_paths = []  # Track optimized images for cleanup
 
-        for img_path in image_paths:
-            if not os.path.exists(img_path):
-                continue
+        try:
+            for img_path in image_paths:
+                if not os.path.exists(img_path):
+                    continue
 
-            with Image.open(img_path) as img:
-                img_width, img_height = img.size
+                with Image.open(img_path) as img:
+                    img_width, img_height = img.size
 
-                # Page size = image size in points (72 points = 1 inch)
-                # Assume 150 DPI for scanned documents
-                dpi = 150
-                page_width = img_width * 72 / dpi
-                page_height = img_height * 72 / dpi
+                    # Page size = image size in points (72 points = 1 inch)
+                    # Assume 150 DPI for scanned documents
+                    dpi = 150
+                    page_width = img_width * 72 / dpi
+                    page_height = img_height * 72 / dpi
 
-                # Create temp PDF for this page - use delete=False and close immediately
-                temp_fd, temp_pdf_path = tempfile.mkstemp(suffix=".pdf")
-                os.close(temp_fd)  # Close the file descriptor immediately
-                temp_pdfs.append(temp_pdf_path)
+                    # Create temp PDF for this page - use delete=False and close immediately
+                    temp_fd, temp_pdf_path = tempfile.mkstemp(suffix=".pdf")
+                    os.close(temp_fd)  # Close the file descriptor immediately
+                    temp_pdfs.append(temp_pdf_path)
 
-                c = canvas.Canvas(temp_pdf_path, pagesize=(page_width, page_height))
+                    c = canvas.Canvas(temp_pdf_path, pagesize=(page_width, page_height))
 
-                # Optimize image
-                optimized_path = self._optimize_image_for_pdf(img_path, quality)
+                    # Optimize image
+                    optimized_path = self._optimize_image_for_pdf(img_path, quality)
+                    if optimized_path != img_path:
+                        optimized_paths.append(optimized_path)
 
-                # Draw image to fill entire page (no margins)
-                c.drawImage(
-                    optimized_path,
-                    0,  # x = 0
-                    0,  # y = 0
-                    width=page_width,
-                    height=page_height,
-                    preserveAspectRatio=True,
-                )
+                    # Draw image to fill entire page (no margins)
+                    c.drawImage(
+                        optimized_path,
+                        0,  # x = 0
+                        0,  # y = 0
+                        width=page_width,
+                        height=page_height,
+                        preserveAspectRatio=True,
+                    )
 
-                # Clean up temp image file
-                if optimized_path != img_path:
-                    os.remove(optimized_path)
+                    c.showPage()
+                    c.save()
 
-                c.showPage()
-                c.save()
+            # Merge all temp PDFs into final output
+            if len(temp_pdfs) == 1:
+                # Just copy single PDF (shutil.copy is safer than move on Windows)
+                import shutil
 
-        # Merge all temp PDFs into final output
-        if len(temp_pdfs) == 1:
-            # Just copy single PDF (shutil.copy is safer than move on Windows)
-            import shutil
+                shutil.copy2(temp_pdfs[0], output_path)
+            elif len(temp_pdfs) > 1:
+                self.merge_pdfs(temp_pdfs, output_path)
 
-            shutil.copy2(temp_pdfs[0], output_path)
-            os.remove(temp_pdfs[0])
-        elif len(temp_pdfs) > 1:
-            self.merge_pdfs(temp_pdfs, output_path)
-            # Clean up temp PDFs
+            return output_path
+        finally:
+            # Always clean up temp files, even if an exception occurred
+            for optimized_path in optimized_paths:
+                try:
+                    if os.path.exists(optimized_path):
+                        os.remove(optimized_path)
+                except OSError:
+                    pass
+
             for temp_pdf in temp_pdfs:
-                if os.path.exists(temp_pdf):
-                    os.remove(temp_pdf)
-
-        return output_path
+                try:
+                    if os.path.exists(temp_pdf):
+                        os.remove(temp_pdf)
+                except OSError:
+                    pass
 
     def _create_pdf_fixed_size(
         self,
@@ -149,47 +164,56 @@ class PDFService:
         usable_width = page_width - (2 * self.margin)
         usable_height = page_height - (2 * self.margin)
 
-        for img_path in image_paths:
-            if not os.path.exists(img_path):
-                continue
+        optimized_paths = []  # Track optimized images for cleanup
 
-            # Open image and get dimensions
-            with Image.open(img_path) as img:
-                img_width, img_height = img.size
+        try:
+            for img_path in image_paths:
+                if not os.path.exists(img_path):
+                    continue
 
-                # Calculate scaling to fit page
-                width_ratio = usable_width / img_width
-                height_ratio = usable_height / img_height
-                scale = min(width_ratio, height_ratio)
+                # Open image and get dimensions
+                with Image.open(img_path) as img:
+                    img_width, img_height = img.size
 
-                scaled_width = img_width * scale
-                scaled_height = img_height * scale
+                    # Calculate scaling to fit page
+                    width_ratio = usable_width / img_width
+                    height_ratio = usable_height / img_height
+                    scale = min(width_ratio, height_ratio)
 
-                # Center image on page
-                x = self.margin + (usable_width - scaled_width) / 2
-                y = self.margin + (usable_height - scaled_height) / 2
+                    scaled_width = img_width * scale
+                    scaled_height = img_height * scale
 
-                # Optimize image for PDF
-                optimized_path = self._optimize_image_for_pdf(img_path, quality)
+                    # Center image on page
+                    x = self.margin + (usable_width - scaled_width) / 2
+                    y = self.margin + (usable_height - scaled_height) / 2
 
-                # Draw image
-                c.drawImage(
-                    optimized_path,
-                    x,
-                    y,
-                    width=scaled_width,
-                    height=scaled_height,
-                    preserveAspectRatio=True,
-                )
+                    # Optimize image for PDF
+                    optimized_path = self._optimize_image_for_pdf(img_path, quality)
+                    if optimized_path != img_path:
+                        optimized_paths.append(optimized_path)
 
-                # Clean up temp file
-                if optimized_path != img_path:
-                    os.remove(optimized_path)
+                    # Draw image
+                    c.drawImage(
+                        optimized_path,
+                        x,
+                        y,
+                        width=scaled_width,
+                        height=scaled_height,
+                        preserveAspectRatio=True,
+                    )
 
-            c.showPage()
+                c.showPage()
 
-        c.save()
-        return output_path
+            c.save()
+            return output_path
+        finally:
+            # Always clean up temp files, even if an exception occurred
+            for optimized_path in optimized_paths:
+                try:
+                    if os.path.exists(optimized_path):
+                        os.remove(optimized_path)
+                except OSError:
+                    pass
 
     def _optimize_image_for_pdf(self, image_path: str, quality: int) -> str:
         """
@@ -240,45 +264,54 @@ class PDFService:
 
         # Load image from bytes
         img_buffer = io.BytesIO(image_data)
-        with Image.open(img_buffer) as img:
-            if img.mode in ("RGBA", "P"):
-                img = img.convert("RGB")
+        temp_img_path = None
 
-            img_width, img_height = img.size
+        try:
+            with Image.open(img_buffer) as img:
+                if img.mode in ("RGBA", "P"):
+                    img = img.convert("RGB")
 
-            # Calculate scaling
-            width_ratio = usable_width / img_width
-            height_ratio = usable_height / img_height
-            scale = min(width_ratio, height_ratio)
+                img_width, img_height = img.size
 
-            scaled_width = img_width * scale
-            scaled_height = img_height * scale
+                # Calculate scaling
+                width_ratio = usable_width / img_width
+                height_ratio = usable_height / img_height
+                scale = min(width_ratio, height_ratio)
 
-            x = self.margin + (usable_width - scaled_width) / 2
-            y = self.margin + (usable_height - scaled_height) / 2
+                scaled_width = img_width * scale
+                scaled_height = img_height * scale
 
-            # Save optimized image to temp file for reportlab
-            # Use mkstemp to avoid Windows file locking issues
-            temp_fd, temp_img_path = tempfile.mkstemp(suffix=".jpg")
-            os.close(temp_fd)  # Close the file descriptor immediately
-            img.save(temp_img_path, "JPEG", quality=quality, optimize=True)
+                x = self.margin + (usable_width - scaled_width) / 2
+                y = self.margin + (usable_height - scaled_height) / 2
 
-            c.drawImage(
-                temp_img_path,
-                x,
-                y,
-                width=scaled_width,
-                height=scaled_height,
-                preserveAspectRatio=True,
-            )
+                # Save optimized image to temp file for reportlab
+                # Use mkstemp to avoid Windows file locking issues
+                temp_fd, temp_img_path = tempfile.mkstemp(suffix=".jpg")
+                os.close(temp_fd)  # Close the file descriptor immediately
+                img.save(temp_img_path, "JPEG", quality=quality, optimize=True)
 
-            os.remove(temp_img_path)
+                c.drawImage(
+                    temp_img_path,
+                    x,
+                    y,
+                    width=scaled_width,
+                    height=scaled_height,
+                    preserveAspectRatio=True,
+                )
 
-        c.showPage()
-        c.save()
+            c.showPage()
+            c.save()
 
-        pdf_buffer.seek(0)
-        return pdf_buffer.getvalue()
+            pdf_buffer.seek(0)
+            return pdf_buffer.getvalue()
+        finally:
+            # Always clean up temp file
+            if temp_img_path:
+                try:
+                    if os.path.exists(temp_img_path):
+                        os.remove(temp_img_path)
+                except OSError:
+                    pass
 
     def get_pdf_info(self, pdf_path: str) -> dict:
         """
@@ -334,65 +367,81 @@ class PDFService:
         Create searchable PDF where each page size matches its image exactly.
         """
         temp_pdfs = []
+        optimized_paths = []  # Track optimized images for cleanup
 
-        for idx, img_path in enumerate(image_paths):
-            if not os.path.exists(img_path):
-                continue
+        try:
+            for idx, img_path in enumerate(image_paths):
+                if not os.path.exists(img_path):
+                    continue
 
-            with Image.open(img_path) as img:
-                img_width, img_height = img.size
+                with Image.open(img_path) as img:
+                    img_width, img_height = img.size
 
-                # Page size = image size in points (72 points = 1 inch)
-                dpi = 150
-                page_width = img_width * 72 / dpi
-                page_height = img_height * 72 / dpi
+                    # Page size = image size in points (72 points = 1 inch)
+                    dpi = 150
+                    page_width = img_width * 72 / dpi
+                    page_height = img_height * 72 / dpi
 
-                # Create temp PDF for this page
-                temp_fd, temp_pdf_path = tempfile.mkstemp(suffix=".pdf")
-                os.close(temp_fd)
-                temp_pdfs.append(temp_pdf_path)
+                    # Create temp PDF for this page
+                    temp_fd, temp_pdf_path = tempfile.mkstemp(suffix=".pdf")
+                    os.close(temp_fd)
+                    temp_pdfs.append(temp_pdf_path)
 
-                c = canvas.Canvas(temp_pdf_path, pagesize=(page_width, page_height))
+                    c = canvas.Canvas(temp_pdf_path, pagesize=(page_width, page_height))
 
-                # Optimize image
-                optimized_path = self._optimize_image_for_pdf(img_path, quality)
+                    # Optimize image
+                    optimized_path = self._optimize_image_for_pdf(img_path, quality)
+                    if optimized_path != img_path:
+                        optimized_paths.append(optimized_path)
 
-                # Draw image to fill entire page
-                c.drawImage(
-                    optimized_path,
-                    0,
-                    0,
-                    width=page_width,
-                    height=page_height,
-                    preserveAspectRatio=True,
-                )
-
-                # Add invisible text layer if OCR data available
-                if idx < len(ocr_data) and ocr_data[idx]:
-                    self._add_text_layer(
-                        c, ocr_data[idx], img_width, img_height, page_width, page_height
+                    # Draw image to fill entire page
+                    c.drawImage(
+                        optimized_path,
+                        0,
+                        0,
+                        width=page_width,
+                        height=page_height,
+                        preserveAspectRatio=True,
                     )
 
-                # Clean up temp image file
-                if optimized_path != img_path:
-                    os.remove(optimized_path)
+                    # Add invisible text layer if OCR data available
+                    if idx < len(ocr_data) and ocr_data[idx]:
+                        self._add_text_layer(
+                            c,
+                            ocr_data[idx],
+                            img_width,
+                            img_height,
+                            page_width,
+                            page_height,
+                        )
 
-                c.showPage()
-                c.save()
+                    c.showPage()
+                    c.save()
 
-        # Merge all temp PDFs into final output
-        if len(temp_pdfs) == 1:
-            import shutil
+            # Merge all temp PDFs into final output
+            if len(temp_pdfs) == 1:
+                import shutil
 
-            shutil.copy2(temp_pdfs[0], output_path)
-            os.remove(temp_pdfs[0])
-        elif len(temp_pdfs) > 1:
-            self.merge_pdfs(temp_pdfs, output_path)
+                shutil.copy2(temp_pdfs[0], output_path)
+            elif len(temp_pdfs) > 1:
+                self.merge_pdfs(temp_pdfs, output_path)
+
+            return output_path
+        finally:
+            # Always clean up temp files, even if an exception occurred
+            for optimized_path in optimized_paths:
+                try:
+                    if os.path.exists(optimized_path):
+                        os.remove(optimized_path)
+                except OSError:
+                    pass
+
             for temp_pdf in temp_pdfs:
-                if os.path.exists(temp_pdf):
-                    os.remove(temp_pdf)
-
-        return output_path
+                try:
+                    if os.path.exists(temp_pdf):
+                        os.remove(temp_pdf)
+                except OSError:
+                    pass
 
     def _create_searchable_pdf_fixed_size(
         self,
@@ -413,59 +462,68 @@ class PDFService:
         usable_width = page_width - (2 * self.margin)
         usable_height = page_height - (2 * self.margin)
 
-        for idx, img_path in enumerate(image_paths):
-            if not os.path.exists(img_path):
-                continue
+        optimized_paths = []  # Track optimized images for cleanup
 
-            with Image.open(img_path) as img:
-                img_width, img_height = img.size
+        try:
+            for idx, img_path in enumerate(image_paths):
+                if not os.path.exists(img_path):
+                    continue
 
-                # Calculate scaling to fit page
-                width_ratio = usable_width / img_width
-                height_ratio = usable_height / img_height
-                scale = min(width_ratio, height_ratio)
+                with Image.open(img_path) as img:
+                    img_width, img_height = img.size
 
-                scaled_width = img_width * scale
-                scaled_height = img_height * scale
+                    # Calculate scaling to fit page
+                    width_ratio = usable_width / img_width
+                    height_ratio = usable_height / img_height
+                    scale = min(width_ratio, height_ratio)
 
-                # Center image on page
-                x = self.margin + (usable_width - scaled_width) / 2
-                y = self.margin + (usable_height - scaled_height) / 2
+                    scaled_width = img_width * scale
+                    scaled_height = img_height * scale
 
-                # Optimize image for PDF
-                optimized_path = self._optimize_image_for_pdf(img_path, quality)
+                    # Center image on page
+                    x = self.margin + (usable_width - scaled_width) / 2
+                    y = self.margin + (usable_height - scaled_height) / 2
 
-                # Draw image
-                c.drawImage(
-                    optimized_path,
-                    x,
-                    y,
-                    width=scaled_width,
-                    height=scaled_height,
-                    preserveAspectRatio=True,
-                )
+                    # Optimize image for PDF
+                    optimized_path = self._optimize_image_for_pdf(img_path, quality)
+                    if optimized_path != img_path:
+                        optimized_paths.append(optimized_path)
 
-                # Add invisible text layer if OCR data available
-                if idx < len(ocr_data) and ocr_data[idx]:
-                    self._add_text_layer(
-                        c,
-                        ocr_data[idx],
-                        img_width,
-                        img_height,
-                        scaled_width,
-                        scaled_height,
-                        x_offset=x,
-                        y_offset=y,
+                    # Draw image
+                    c.drawImage(
+                        optimized_path,
+                        x,
+                        y,
+                        width=scaled_width,
+                        height=scaled_height,
+                        preserveAspectRatio=True,
                     )
 
-                # Clean up temp file
-                if optimized_path != img_path:
-                    os.remove(optimized_path)
+                    # Add invisible text layer if OCR data available
+                    if idx < len(ocr_data) and ocr_data[idx]:
+                        self._add_text_layer(
+                            c,
+                            ocr_data[idx],
+                            img_width,
+                            img_height,
+                            scaled_width,
+                            scaled_height,
+                            x_offset=x,
+                            y_offset=y,
+                        )
 
-            c.showPage()
+                c.showPage()
 
-        c.save()
-        return output_path
+            c.save()
+            return output_path
+        finally:
+            # Always clean up temp files, even if an exception occurred
+            for optimized_path in optimized_paths:
+                try:
+                    if os.path.exists(optimized_path):
+                        os.remove(optimized_path)
+                except OSError:
+                    pass
 
     def _add_text_layer(
         self,
