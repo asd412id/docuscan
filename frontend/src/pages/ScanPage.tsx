@@ -78,6 +78,8 @@ export function ScanPage() {
 
   const [step, setStep] = useState<Step>('upload');
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [isUploading, setIsUploading] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [ocrText, setOcrText] = useState('');
   const [isOcrLoading, setIsOcrLoading] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
@@ -250,7 +252,7 @@ export function ScanPage() {
   const loadProcessedImage = async (docUuid: string) => {
     try {
       const processed = await documentService.getImageUrl(docUuid, 'processed');
-      setImageUrls(prev => {
+      setTrackedImageUrls((prev) => {
         // Revoke old processed URL before setting new one
         revokeBlobUrl(prev.processed);
         trackBlobUrl(processed);
@@ -262,7 +264,7 @@ export function ScanPage() {
   };
 
   const handleFilesSelected = useCallback(async (files: File[]) => {
-    setIsProcessing(true);
+    setIsUploading(true);
     setUploadProgress(0);
     
     try {
@@ -293,14 +295,14 @@ export function ScanPage() {
       toast.error(t('errors.uploadFailed'));
       console.error(error);
     } finally {
-      setIsProcessing(false);
+      setIsUploading(false);
       setUploadProgress(0);
     }
-  }, [step, setDocuments, addDocuments, setCurrentDocument, setCorners, setIsProcessing, t]);
+  }, [step, setDocuments, addDocuments, setCurrentDocument, setCorners, t]);
 
   const handleDetect = async () => {
     if (!currentDocument) return;
-    
+
     setIsProcessing(true);
     try {
       const detection = await scanService.detectEdges(currentDocument.uuid);
@@ -518,7 +520,7 @@ export function ScanPage() {
     
     if (docsToExport.length === 0) return;
     
-    setIsProcessing(true);
+    setIsExporting(true);
     try {
       const uuids = docsToExport.map(d => d.uuid);
       // Only pass searchable option for PDF format
@@ -544,7 +546,7 @@ export function ScanPage() {
     const docsToExport = documents.filter(d => d.status === 'completed');
     if (docsToExport.length === 0) return;
     
-    setIsProcessing(true);
+    setIsExporting(true);
     try {
       const uuids = docsToExport.map(d => d.uuid);
       const result = await scanService.export(uuids, 'zip', exportQuality);
@@ -590,19 +592,19 @@ export function ScanPage() {
           try {
             const processed = await documentService.getImageUrl(nextDoc.uuid, 'processed');
             trackBlobUrl(processed);
-            setImageUrls({ processed });
+            setTrackedImageUrls(() => ({ processed }));
           } catch {
             // Ignore error
           } finally {
             setIsLoadingImage(false);
           }
         } else {
-          setImageUrls({});
+          setTrackedImageUrls(() => ({}));
         }
       } else {
         // No documents left - reset everything
         setCurrentDocument(null);
-        setImageUrls({});
+        setTrackedImageUrls(() => ({}));
         setOcrText('');
         setStep('upload');
       }
@@ -634,7 +636,7 @@ export function ScanPage() {
         // New document's images will be loaded by the useEffect
       } else {
         setCurrentDocument(null);
-        setImageUrls({});
+        setTrackedImageUrls(() => ({}));
         setStep('upload');
       }
     } catch {
@@ -716,19 +718,19 @@ export function ScanPage() {
           try {
             const processed = await documentService.getImageUrl(remaining[0].uuid, 'processed');
             trackBlobUrl(processed);
-            setImageUrls({ processed });
+            setTrackedImageUrls(() => ({ processed }));
           } catch {
             // Ignore error
           } finally {
             setIsLoadingImage(false);
           }
         } else {
-          setImageUrls({});
+          setTrackedImageUrls(() => ({}));
         }
       } else {
         // No documents left
         setCurrentDocument(null);
-        setImageUrls({});
+        setTrackedImageUrls(() => ({}));
         setOcrText('');
         setStep('upload');
       }
@@ -756,8 +758,8 @@ export function ScanPage() {
           <CardContent className="pt-6">
             <FileUpload 
               onFilesSelected={handleFilesSelected}
-              disabled={isProcessing}
-              isUploading={isProcessing}
+              disabled={isProcessing || isExporting || backgroundProcess.isProcessing}
+              isUploading={isUploading}
               uploadProgress={uploadProgress}
             />
             {uploadProgress > 0 && (
@@ -1270,6 +1272,7 @@ export function ScanPage() {
                       setIsProcessing(false);
                     }
                   }
+
                   setStep('adjust');
                 }}
               >

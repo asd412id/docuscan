@@ -103,10 +103,15 @@ async def detect_document_edges(
     for pt in pts:
         cv2.circle(preview, tuple(pt), 10, (0, 0, 255), -1)
 
-    cv2.imwrite(preview_path, preview)
+    if not cv2.imwrite(preview_path, preview):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to write preview image",
+        )
 
     # Update document status
     document.status = "detected"
+    await db.flush()
 
     return DetectResponse(
         document_uuid=document.uuid,
@@ -200,7 +205,11 @@ async def process_document(
     processed_path = os.path.join(
         os.path.dirname(document.file_path), processed_filename
     )
-    cv2.imwrite(processed_path, enhanced, [cv2.IMWRITE_JPEG_QUALITY, 95])
+    if not cv2.imwrite(processed_path, enhanced, [cv2.IMWRITE_JPEG_QUALITY, 95]):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to write processed image",
+        )
 
     # Create thumbnail
     thumbnail = scanner.create_thumbnail(enhanced)
@@ -208,12 +217,17 @@ async def process_document(
     thumbnail_path = os.path.join(
         os.path.dirname(document.file_path), thumbnail_filename
     )
-    cv2.imwrite(thumbnail_path, thumbnail)
+    if not cv2.imwrite(thumbnail_path, thumbnail):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to write thumbnail image",
+        )
 
     # Update document
     document.processed_path = processed_path
     document.thumbnail_path = thumbnail_path
     document.status = "completed"
+    await db.flush()
 
     return ProcessResponse(
         document_uuid=document.uuid,
@@ -267,6 +281,7 @@ async def extract_text(
 
     # Update document
     document.ocr_text = text
+    await db.flush()
 
     return OCRResponse(
         document_uuid=document.uuid, text=text, confidence=confidence, language=lang

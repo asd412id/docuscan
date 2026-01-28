@@ -61,8 +61,12 @@ def normalize_mime_type(content_type: str | None, filename: str) -> str:
             ".heic": "image/heic",
             ".heif": "image/heif",
         }
-        return ext_to_mime.get(ext, content_type or "application/octet-stream")
-    return content_type or "image/jpeg"
+        return ext_to_mime.get(ext, "application/octet-stream")
+
+    if not content_type:
+        return "application/octet-stream"
+
+    return content_type
 
 
 @router.post(
@@ -95,6 +99,16 @@ async def upload_document(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"File too large. Maximum size: {settings.max_upload_size_mb}MB",
+        )
+
+    # If client sent a generic/empty content-type, infer from extension after reading
+    if mime_type == "application/octet-stream":
+        mime_type = normalize_mime_type(None, file.filename or "image.jpg")
+
+    if mime_type not in ALLOWED_MIME_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File type not allowed. Allowed types: {', '.join(ALLOWED_MIME_TYPES)}",
         )
 
     # Generate unique filename
@@ -179,6 +193,12 @@ async def upload_documents_batch(
         max_size = settings.max_upload_size_mb * 1024 * 1024
         if file_size > max_size:
             continue  # Skip oversized files
+
+        if mime_type == "application/octet-stream":
+            mime_type = normalize_mime_type(None, file.filename or "image.jpg")
+
+        if mime_type not in ALLOWED_MIME_TYPES:
+            continue
 
         file_ext = os.path.splitext(file.filename or "image.jpg")[1] or ".jpg"
         stored_filename = f"{uuid.uuid4()}{file_ext}"
@@ -512,12 +532,13 @@ async def delete_document(
                 pass  # File may already be deleted
 
     # Check if this is the last document for this user
-    remaining_docs = await db.execute(
-        select(Document).where(
+    remaining_count_result = await db.execute(
+        select(func.count(Document.id)).where(
             Document.user_id == current_user.id, Document.uuid != document_uuid
         )
     )
-    is_last_document = remaining_docs.scalar_one_or_none() is None
+    remaining_count = remaining_count_result.scalar() or 0
+    is_last_document = remaining_count == 0
 
     # If last document, clean up exports folder too
     if is_last_document and os.path.exists(exports_dir):
@@ -619,10 +640,11 @@ async def batch_delete_documents(
         deleted_count += 1
 
     # Check if any documents remain
-    remaining_docs = await db.execute(
-        select(Document).where(Document.user_id == current_user.id)
+    remaining_count_result = await db.execute(
+        select(func.count(Document.id)).where(Document.user_id == current_user.id)
     )
-    is_empty = remaining_docs.scalar_one_or_none() is None
+    remaining_count = remaining_count_result.scalar() or 0
+    is_empty = remaining_count == 0
 
     # Clean up exports and user directory if empty
     if is_empty:

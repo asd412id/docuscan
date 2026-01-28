@@ -148,17 +148,8 @@ export function HistoryPage() {
   const handleDownload = async (doc: Document) => {
     try {
       const type = doc.status === 'completed' ? 'processed' : 'original';
-      const url = await documentService.getImageUrl(doc.uuid, type);
-      
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = doc.original_filename;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      
-      // Cleanup blob URL after download
-      setTimeout(() => documentService.revokeImageUrl(url), 1000);
+      const url = `/api/documents/${doc.uuid}/${type}`;
+      await documentService.downloadFile(url, doc.original_filename);
     } catch {
       toast.error(t('common.error'));
     }

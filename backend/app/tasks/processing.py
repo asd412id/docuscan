@@ -141,13 +141,15 @@ def process_single_document(
         # Save processed image
         processed_filename = f"processed_{stored_filename}"
         processed_path = os.path.join(os.path.dirname(file_path), processed_filename)
-        cv2.imwrite(processed_path, enhanced, [cv2.IMWRITE_JPEG_QUALITY, 95])
+        if not cv2.imwrite(processed_path, enhanced, [cv2.IMWRITE_JPEG_QUALITY, 95]):
+            return {"status": "failed", "error": "Failed to write processed image"}
 
         # Create thumbnail
         thumbnail = scanner.create_thumbnail(enhanced)
         thumbnail_filename = f"thumb_{stored_filename}"
         thumbnail_path = os.path.join(os.path.dirname(file_path), thumbnail_filename)
-        cv2.imwrite(thumbnail_path, thumbnail)
+        if not cv2.imwrite(thumbnail_path, thumbnail):
+            return {"status": "failed", "error": "Failed to write thumbnail image"}
 
         update_task_progress(task_id, 100, 100, "completed", "Processing complete")
 
@@ -254,7 +256,17 @@ def process_bulk_documents(
             processed_path = os.path.join(
                 os.path.dirname(doc["file_path"]), processed_filename
             )
-            cv2.imwrite(processed_path, enhanced, [cv2.IMWRITE_JPEG_QUALITY, 95])
+            if not cv2.imwrite(
+                processed_path, enhanced, [cv2.IMWRITE_JPEG_QUALITY, 95]
+            ):
+                results.append(
+                    {
+                        "document_uuid": doc["uuid"],
+                        "status": "failed",
+                        "error": "Failed to write processed image",
+                    }
+                )
+                continue
 
             # Create thumbnail
             thumbnail = scanner.create_thumbnail(enhanced)
@@ -262,7 +274,15 @@ def process_bulk_documents(
             thumbnail_path = os.path.join(
                 os.path.dirname(doc["file_path"]), thumbnail_filename
             )
-            cv2.imwrite(thumbnail_path, thumbnail)
+            if not cv2.imwrite(thumbnail_path, thumbnail):
+                results.append(
+                    {
+                        "document_uuid": doc["uuid"],
+                        "status": "failed",
+                        "error": "Failed to write thumbnail image",
+                    }
+                )
+                continue
 
             results.append(
                 {
