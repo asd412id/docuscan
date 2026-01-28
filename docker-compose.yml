@@ -289,6 +289,8 @@ services:
       --maxmemory ${REDIS_MAXMEMORY:-256mb}
       --maxmemory-policy ${REDIS_MAXMEMORY_POLICY:-allkeys-lru}
       ${REDIS_PASSWORD:+--requirepass ${REDIS_PASSWORD}}
+    environment:
+      - REDISCLI_AUTH=${REDIS_PASSWORD:-}
     volumes:
       - redis-data:/data
     # NO ports exposed - only accessible within internal networks
@@ -299,7 +301,7 @@ services:
       - data-network
       - monitoring-network
     healthcheck:
-      test: ["CMD", "redis-cli", "${REDIS_PASSWORD:+-a ${REDIS_PASSWORD}}", "ping"]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
