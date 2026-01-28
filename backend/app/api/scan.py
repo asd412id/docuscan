@@ -124,8 +124,8 @@ async def detect_document_edges(
 @router.post("/process", response_model=ProcessResponse)
 @limiter.limit(settings.rate_limit_process)
 async def process_document(
-    request_obj: Request,
-    request: ProcessRequest,
+    request: Request,
+    process_request: ProcessRequest,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -135,7 +135,8 @@ async def process_document(
     """
     result = await db.execute(
         select(Document).where(
-            Document.uuid == request.document_uuid, Document.user_id == current_user.id
+            Document.uuid == process_request.document_uuid,
+            Document.user_id == current_user.id,
         )
     )
     document = result.scalar_one_or_none()
@@ -158,13 +159,13 @@ async def process_document(
         )
 
     # Get corners
-    if request.corners:
+    if process_request.corners:
         corners = np.array(
             [
-                request.corners.top_left,
-                request.corners.top_right,
-                request.corners.bottom_right,
-                request.corners.bottom_left,
+                process_request.corners.top_left,
+                process_request.corners.top_right,
+                process_request.corners.bottom_right,
+                process_request.corners.bottom_left,
             ],
             dtype=np.float32,
         )
@@ -182,16 +183,16 @@ async def process_document(
     warped = scanner.perspective_transform(image, corners)
 
     # Apply rotation if specified
-    if request.settings.rotation > 0:
-        warped = scanner.rotate_image(warped, request.settings.rotation)
+    if process_request.settings.rotation > 0:
+        warped = scanner.rotate_image(warped, process_request.settings.rotation)
 
     # Apply enhancement
     enhanced = scanner.enhance_scan(
         warped,
-        mode=request.settings.filter_mode,
-        brightness=request.settings.brightness,
-        contrast=request.settings.contrast,
-        auto_enhance=request.settings.auto_enhance,
+        mode=process_request.settings.filter_mode,
+        brightness=process_request.settings.brightness,
+        contrast=process_request.settings.contrast,
+        auto_enhance=process_request.settings.auto_enhance,
     )
 
     # Save processed image
@@ -489,8 +490,8 @@ async def download_export(
 @router.post("/bulk-process", response_model=List[ProcessResponse])
 @limiter.limit(settings.rate_limit_process)
 async def bulk_process_documents(
-    request_obj: Request,
-    request: BulkProcessRequest,
+    request: Request,
+    bulk_request: BulkProcessRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -498,7 +499,7 @@ async def bulk_process_documents(
     Process multiple documents in bulk.
     Each document can have its own corners and settings, or use defaults.
     """
-    doc_uuids = [item.document_uuid for item in request.documents]
+    doc_uuids = [item.document_uuid for item in bulk_request.documents]
 
     result = await db.execute(
         select(Document).where(
@@ -509,7 +510,7 @@ async def bulk_process_documents(
 
     responses = []
 
-    for item in request.documents:
+    for item in bulk_request.documents:
         document = documents.get(item.document_uuid)
         if not document or not os.path.exists(document.file_path):
             continue
@@ -519,7 +520,7 @@ async def bulk_process_documents(
             continue
 
         # Use item-specific settings or default
-        doc_settings = item.settings or request.default_settings
+        doc_settings = item.settings or bulk_request.default_settings
 
         # Get corners (item-specific or auto-detect)
         if item.corners:
