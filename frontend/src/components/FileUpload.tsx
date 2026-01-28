@@ -1,8 +1,9 @@
-import { useCallback } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { Upload, FileImage } from 'lucide-react';
+import { Upload, Camera, X, Plus, Check } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
 
 interface FileUploadProps {
   onFilesSelected: (files: File[]) => void;
@@ -26,12 +27,24 @@ export function FileUpload({
   className 
 }: FileUploadProps) {
   const { t } = useTranslation();
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const [capturedFiles, setCapturedFiles] = useState<File[]>([]);
+  const [previews, setPreviews] = useState<string[]>([]);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     if (acceptedFiles.length > 0) {
-      onFilesSelected(acceptedFiles);
+      if (multiple) {
+        // Add to existing captured files
+        const newFiles = [...capturedFiles, ...acceptedFiles];
+        const newPreviews = acceptedFiles.map(file => URL.createObjectURL(file));
+        setCapturedFiles(newFiles);
+        setPreviews(prev => [...prev, ...newPreviews]);
+      } else {
+        // Single file mode - submit immediately
+        onFilesSelected(acceptedFiles);
+      }
     }
-  }, [onFilesSelected]);
+  }, [capturedFiles, multiple, onFilesSelected]);
 
   const { getRootProps, getInputProps, isDragActive, isDragReject } = useDropzone({
     onDrop,
@@ -41,43 +54,203 @@ export function FileUpload({
     maxSize: 20 * 1024 * 1024, // 20MB
   });
 
-  return (
-    <div
-      {...getRootProps()}
-      className={cn(
-        'relative flex flex-col items-center justify-center w-full min-h-[300px] p-8',
-        'border-2 border-dashed rounded-lg cursor-pointer transition-colors',
-        'hover:border-primary/50 hover:bg-primary/5',
-        isDragActive && 'border-primary bg-primary/10',
-        isDragReject && 'border-destructive bg-destructive/10',
-        disabled && 'opacity-50 cursor-not-allowed',
-        className
-      )}
-    >
-      <input {...getInputProps()} />
-      
-      <div className="flex flex-col items-center text-center space-y-4">
-        {isDragActive ? (
-          <FileImage className="w-16 h-16 text-primary animate-pulse" />
-        ) : (
-          <Upload className="w-16 h-16 text-muted-foreground" />
-        )}
-        
-        <div className="space-y-2">
-          <h3 className="text-lg font-semibold">
-            {isDragActive 
-              ? t('scan.uploadSubtitle') 
-              : t('scan.uploadTitle')
-            }
-          </h3>
-          <p className="text-sm text-muted-foreground">
-            {t('scan.uploadSubtitle')}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {t('scan.uploadHint')}
-          </p>
+  const handleCameraCapture = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      const fileArray = Array.from(files);
+      if (multiple) {
+        const newFiles = [...capturedFiles, ...fileArray];
+        const newPreviews = fileArray.map(file => URL.createObjectURL(file));
+        setCapturedFiles(newFiles);
+        setPreviews(prev => [...prev, ...newPreviews]);
+      } else {
+        onFilesSelected(fileArray);
+      }
+    }
+    // Reset input so same file can be selected again
+    if (cameraInputRef.current) {
+      cameraInputRef.current.value = '';
+    }
+  }, [capturedFiles, multiple, onFilesSelected]);
+
+  const openCamera = useCallback(() => {
+    cameraInputRef.current?.click();
+  }, []);
+
+  const removeFile = useCallback((index: number) => {
+    URL.revokeObjectURL(previews[index]);
+    setCapturedFiles(prev => prev.filter((_, i) => i !== index));
+    setPreviews(prev => prev.filter((_, i) => i !== index));
+  }, [previews]);
+
+  const submitFiles = useCallback(() => {
+    if (capturedFiles.length > 0) {
+      onFilesSelected(capturedFiles);
+      // Clean up previews
+      previews.forEach(url => URL.revokeObjectURL(url));
+      setCapturedFiles([]);
+      setPreviews([]);
+    }
+  }, [capturedFiles, previews, onFilesSelected]);
+
+  const clearAll = useCallback(() => {
+    previews.forEach(url => URL.revokeObjectURL(url));
+    setCapturedFiles([]);
+    setPreviews([]);
+  }, [previews]);
+
+  // Show preview grid if we have captured files
+  if (capturedFiles.length > 0 && multiple) {
+    return (
+      <div className={cn('space-y-4', className)}>
+        {/* Preview Grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+          {previews.map((preview, index) => (
+            <div key={index} className="relative aspect-[3/4] group">
+              <img
+                src={preview}
+                alt={`Capture ${index + 1}`}
+                className="w-full h-full object-cover rounded-lg border"
+              />
+              <button
+                type="button"
+                onClick={() => removeFile(index)}
+                className="absolute top-1 right-1 p-1 bg-destructive text-destructive-foreground rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+              >
+                <X className="w-4 h-4" />
+              </button>
+              <div className="absolute bottom-1 left-1 px-2 py-0.5 bg-black/50 text-white text-xs rounded">
+                {index + 1}
+              </div>
+            </div>
+          ))}
+          
+          {/* Add More Button */}
+          <div
+            {...getRootProps()}
+            className={cn(
+              'aspect-[3/4] flex flex-col items-center justify-center',
+              'border-2 border-dashed rounded-lg cursor-pointer transition-colors',
+              'hover:border-primary/50 hover:bg-primary/5',
+              isDragActive && 'border-primary bg-primary/10'
+            )}
+          >
+            <input {...getInputProps()} />
+            <Plus className="w-8 h-8 text-muted-foreground mb-2" />
+            <span className="text-xs text-muted-foreground text-center px-2">
+              {t('scan.addMore')}
+            </span>
+          </div>
+        </div>
+
+        {/* Action Buttons */}
+        <div className="flex flex-col sm:flex-row gap-2">
+          {/* Camera Button for Mobile */}
+          <input
+            ref={cameraInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            onChange={handleCameraCapture}
+            className="hidden"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            onClick={openCamera}
+            className="flex-1 sm:flex-none"
+          >
+            <Camera className="w-4 h-4 mr-2" />
+            {t('scan.takePhoto')}
+          </Button>
+
+          <div className="flex-1" />
+
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={clearAll}
+          >
+            {t('common.cancel')}
+          </Button>
+          
+          <Button
+            type="button"
+            onClick={submitFiles}
+          >
+            <Check className="w-4 h-4 mr-2" />
+            {t('scan.usePhotos', { count: capturedFiles.length })}
+          </Button>
         </div>
       </div>
+    );
+  }
+
+  return (
+    <div className={cn('space-y-4', className)}>
+      {/* Hidden camera input */}
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={handleCameraCapture}
+        className="hidden"
+      />
+
+      {/* Main Upload Area */}
+      <div
+        {...getRootProps()}
+        className={cn(
+          'relative flex flex-col items-center justify-center w-full min-h-[250px] p-6',
+          'border-2 border-dashed rounded-lg cursor-pointer transition-colors',
+          'hover:border-primary/50 hover:bg-primary/5',
+          isDragActive && 'border-primary bg-primary/10',
+          isDragReject && 'border-destructive bg-destructive/10',
+          disabled && 'opacity-50 cursor-not-allowed'
+        )}
+      >
+        <input {...getInputProps()} />
+        
+        <div className="flex flex-col items-center text-center space-y-3">
+          <Upload className="w-12 h-12 text-muted-foreground" />
+          
+          <div className="space-y-1">
+            <h3 className="text-base font-semibold">
+              {isDragActive 
+                ? t('scan.uploadSubtitle') 
+                : t('scan.uploadTitle')
+              }
+            </h3>
+            <p className="text-sm text-muted-foreground">
+              {t('scan.uploadSubtitle')}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {t('scan.uploadHint')}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Camera Button - More prominent on mobile */}
+      <div className="flex justify-center">
+        <Button
+          type="button"
+          variant="outline"
+          size="lg"
+          onClick={openCamera}
+          disabled={disabled}
+          className="w-full sm:w-auto"
+        >
+          <Camera className="w-5 h-5 mr-2" />
+          {t('scan.takePhoto')}
+        </Button>
+      </div>
+
+      {/* Hint for mobile */}
+      <p className="text-xs text-muted-foreground text-center sm:hidden">
+        {t('scan.cameraHint')}
+      </p>
     </div>
   );
 }
