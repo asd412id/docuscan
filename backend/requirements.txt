@@ -1,0 +1,46 @@
+# FastAPI & Web
+fastapi>=0.115.0
+uvicorn[standard]>=0.34.0
+python-multipart>=0.0.18
+pydantic>=2.10.0
+pydantic-settings>=2.7.0
+
+# Authentication
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+bcrypt>=4.2.0
+
+# Database
+sqlalchemy>=2.0.36
+asyncpg>=0.30.0
+aiosqlite>=0.20.0
+alembic>=1.14.0
+
+# Redis & Celery
+redis>=5.2.0
+celery>=5.4.0
+
+# Rate Limiting
+slowapi>=0.1.9
+
+# Image Processing
+opencv-python-headless>=4.10.0
+numpy>=2.0.0
+Pillow>=11.0.0
+
+# OCR
+pytesseract>=0.3.13
+
+# PDF Generation
+reportlab>=4.2.0
+PyPDF2>=3.0.1
+
+# Utils
+python-dotenv>=1.0.0
+aiofiles>=24.1.0
+httpx>=0.28.0
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.24.0
+pytest-cov>=6.0.0
