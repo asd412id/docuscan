@@ -521,9 +521,11 @@ class DocumentScanner:
         """Enhance the scanned document image."""
         result = image.copy()
 
-        # For B&W mode, skip auto_enhance as it can cause issues
-        if auto_enhance and mode != "bw":
-            result = self._auto_enhance(result)
+        if auto_enhance:
+            if mode == "scan":
+                result = self._scan_color_enhance(result)
+            elif mode != "bw":
+                result = self._auto_enhance(result)
 
         if brightness != 0 or contrast != 0:
             result = self._adjust_brightness_contrast(result, brightness, contrast)
@@ -630,19 +632,60 @@ class DocumentScanner:
 
     def _auto_enhance(self, image: np.ndarray) -> np.ndarray:
         """Apply automatic image enhancement for document scanning."""
-        result = cv2.fastNlMeansDenoisingColored(image, None, 3, 3, 7, 21)
+        denoised = cv2.fastNlMeansDenoisingColored(image, None, 5, 5, 7, 21)
 
-        lab = cv2.cvtColor(result, cv2.COLOR_BGR2LAB)
+        lab = cv2.cvtColor(denoised, cv2.COLOR_BGR2LAB)
         l, a, b = cv2.split(lab)
 
-        clahe = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8))
+        bg = cv2.GaussianBlur(l, (0, 0), 30)
+        l = cv2.addWeighted(l, 1.25, bg, -0.25, 0)
+
+        clahe = cv2.createCLAHE(clipLimit=1.8, tileGridSize=(8, 8))
         l = clahe.apply(l)
+
+        l = cv2.bilateralFilter(l, 7, 40, 40)
 
         lab = cv2.merge([l, a, b])
         result = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
 
-        gaussian = cv2.GaussianBlur(result, (0, 0), 2.0)
-        result = cv2.addWeighted(result, 1.3, gaussian, -0.3, 0)
+        gaussian = cv2.GaussianBlur(result, (0, 0), 1.2)
+        result = cv2.addWeighted(result, 1.15, gaussian, -0.15, 0)
+
+        return result
+
+    def _scan_color_enhance(self, image: np.ndarray) -> np.ndarray:
+        """Enhance to look like a physical scanner: clean paper + sharp text."""
+        denoised = cv2.fastNlMeansDenoisingColored(image, None, 6, 6, 7, 21)
+
+        lab = cv2.cvtColor(denoised, cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
+
+        bg = cv2.GaussianBlur(l, (0, 0), 40)
+        l = cv2.addWeighted(l, 1.15, bg, -0.15, 0)
+
+        clahe = cv2.createCLAHE(clipLimit=1.6, tileGridSize=(8, 8))
+        l = clahe.apply(l)
+
+        a = cv2.addWeighted(a, 0.92, np.full_like(a, 128), 0.08, 0)
+        b = cv2.addWeighted(b, 0.92, np.full_like(b, 128), 0.08, 0)
+
+        lab = cv2.merge([l, a, b])
+        result = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+
+        result = cv2.edgePreservingFilter(result, flags=1, sigma_s=45, sigma_r=0.3)
+
+        lab2 = cv2.cvtColor(result, cv2.COLOR_BGR2LAB)
+        l2, a2, b2 = cv2.split(lab2)
+        l_blur = cv2.GaussianBlur(l2, (0, 0), 1.0)
+        l2 = cv2.addWeighted(l2, 1.3, l_blur, -0.3, 0)
+        lab2 = cv2.merge([l2, a2, b2])
+        result = cv2.cvtColor(lab2, cv2.COLOR_LAB2BGR)
+
+        gamma = 0.90
+        lut = np.clip(
+            (np.arange(256, dtype=np.float32) / 255.0) ** gamma * 255.0, 0, 255
+        ).astype(np.uint8)
+        result = cv2.LUT(result, lut)
 
         return result
 

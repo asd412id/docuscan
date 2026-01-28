@@ -35,7 +35,7 @@ export interface CornerPoints {
 }
 
 export interface ScanSettings {
-  filter_mode: 'color' | 'grayscale' | 'bw';
+  filter_mode: 'color' | 'grayscale' | 'bw' | 'scan';
   brightness: number;
   contrast: number;
   rotation: number;

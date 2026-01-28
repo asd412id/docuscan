@@ -113,7 +113,7 @@ export const scanService = {
       document_uuid: documentUuid,
       corners,
       settings: settings || {
-        filter_mode: 'color',
+        filter_mode: 'scan',
         brightness: 0,
         contrast: 0,
         rotation: 0,
@@ -134,7 +134,7 @@ export const scanService = {
     const response = await api.post<ProcessResponse[]>('/scan/bulk-process', {
       documents,
       default_settings: defaultSettings || {
-        filter_mode: 'color',
+        filter_mode: 'scan',
         brightness: 0,
         contrast: 0,
         rotation: 0,

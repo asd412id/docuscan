@@ -87,7 +87,7 @@ class CornerPoints(BaseModel):
 
 
 class ScanSettings(BaseModel):
-    filter_mode: str = Field(default="color", pattern="^(color|grayscale|bw)$")
+    filter_mode: str = Field(default="color", pattern="^(color|grayscale|bw|scan)$")
     brightness: float = Field(default=0, ge=-100, le=100)
     contrast: float = Field(default=0, ge=-100, le=100)
     rotation: int = Field(default=0, ge=0, le=360)

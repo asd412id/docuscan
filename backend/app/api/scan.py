@@ -408,11 +408,19 @@ async def export_documents(
                 temp_img = os.path.join(export_dir, f"temp_{export_id}_{idx}.{img_ext}")
 
                 if img_ext == "jpg":
-                    cv2.imwrite(
+                    if not cv2.imwrite(
                         temp_img, image, [cv2.IMWRITE_JPEG_QUALITY, request.quality]
-                    )
+                    ):
+                        raise HTTPException(
+                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail="Failed to write image for ZIP export",
+                        )
                 else:
-                    cv2.imwrite(temp_img, image)
+                    if not cv2.imwrite(temp_img, image):
+                        raise HTTPException(
+                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail="Failed to write image for ZIP export",
+                        )
 
                 zf.write(temp_img, f"{base_name}.{img_ext}")
                 os.remove(temp_img)
@@ -429,13 +437,23 @@ async def export_documents(
 
         image = cv2.imread(image_paths[0][0])
         if request.format == "jpg":
-            cv2.imwrite(export_path, image, [cv2.IMWRITE_JPEG_QUALITY, request.quality])
+            if not cv2.imwrite(
+                export_path, image, [cv2.IMWRITE_JPEG_QUALITY, request.quality]
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to write exported image",
+                )
         else:
-            cv2.imwrite(
+            if not cv2.imwrite(
                 export_path,
                 image,
                 [cv2.IMWRITE_PNG_COMPRESSION, 9 - request.quality // 12],
-            )
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to write exported image",
+                )
 
     # Get file size
     file_size = os.path.getsize(export_path)
@@ -574,14 +592,16 @@ async def bulk_process_documents(
         processed_path = os.path.join(
             os.path.dirname(document.file_path), processed_filename
         )
-        cv2.imwrite(processed_path, enhanced, [cv2.IMWRITE_JPEG_QUALITY, 95])
+        if not cv2.imwrite(processed_path, enhanced, [cv2.IMWRITE_JPEG_QUALITY, 95]):
+            continue
 
         thumbnail = scanner.create_thumbnail(enhanced)
         thumbnail_filename = f"thumb_{document.stored_filename}"
         thumbnail_path = os.path.join(
             os.path.dirname(document.file_path), thumbnail_filename
         )
-        cv2.imwrite(thumbnail_path, thumbnail)
+        if not cv2.imwrite(thumbnail_path, thumbnail):
+            continue
 
         document.processed_path = processed_path
         document.thumbnail_path = thumbnail_path
@@ -595,5 +615,7 @@ async def bulk_process_documents(
                 status="completed",
             )
         )
+
+    await db.flush()
 
     return responses

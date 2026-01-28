@@ -32,7 +32,7 @@ interface ScanState {
 }
 
 const defaultSettings: ScanSettings = {
-  filter_mode: 'color',
+  filter_mode: 'scan',
   brightness: 0,
   contrast: 0,
   rotation: 0,
