@@ -52,8 +52,8 @@ LABEL maintainer="DocuScan Team"
 LABEL description="DocuScan Frontend SPA"
 LABEL version="1.0.0"
 
-# Install envsubst (part of gettext)
-RUN apk add --no-cache gettext
+# Install envsubst (part of gettext) and curl for healthcheck
+RUN apk add --no-cache gettext curl
 
 # Create non-root user
 RUN addgroup -g 1000 -S appgroup && \
@@ -86,7 +86,7 @@ EXPOSE 80
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD wget -q --spider http://localhost:80 || exit 1
+    CMD curl -f http://localhost:80 || exit 1
 
 # Use custom entrypoint
 ENTRYPOINT ["/docker-entrypoint.sh"]
