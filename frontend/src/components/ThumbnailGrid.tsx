@@ -69,35 +69,28 @@ export function ThumbnailGrid({
   // Load thumbnails for documents
   useEffect(() => {
     let isMounted = true;
-    
+
     const loadThumbnails = async () => {
       for (const doc of documents) {
-        // Skip if already loaded
-        if (thumbnails[doc.uuid]) continue;
-        
-        // Only load thumbnail for completed documents
         if (doc.status !== 'completed') continue;
-        
-        setLoading(prev => {
-          if (prev[doc.uuid]) return prev;
-          return { ...prev, [doc.uuid]: true };
-        });
-        
+
+        if (thumbnails[doc.uuid] || loading[doc.uuid]) continue;
+
+        setLoading((prev) => ({ ...prev, [doc.uuid]: true }));
+
         try {
           const url = await documentService.getImageUrl(doc.uuid, 'thumbnail');
           if (isMounted) {
-            // Track this blob URL for cleanup
             blobUrlsRef.current.add(url);
-            setThumbnails(prev => ({ ...prev, [doc.uuid]: url }));
+            setThumbnails((prev) => ({ ...prev, [doc.uuid]: url }));
           } else {
-            // Component unmounted, revoke immediately
             documentService.revokeImageUrl(url);
           }
         } catch {
           // Ignore errors
         } finally {
           if (isMounted) {
-            setLoading(prev => ({ ...prev, [doc.uuid]: false }));
+            setLoading((prev) => ({ ...prev, [doc.uuid]: false }));
           }
         }
       }
@@ -108,7 +101,7 @@ export function ThumbnailGrid({
     return () => {
       isMounted = false;
     };
-  }, [documents, thumbnails]);
+  }, [documents, thumbnails, loading]);
 
   // Cleanup all blob URLs on unmount
   useEffect(() => {

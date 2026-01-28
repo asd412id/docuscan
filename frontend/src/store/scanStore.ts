@@ -55,14 +55,24 @@ export const useScanStore = create<ScanState>((set, get) => ({
   addDocuments: (documents) => 
     set((state) => ({ documents: [...state.documents, ...documents] })),
   
-  removeDocument: (uuid) => 
+  removeDocument: (uuid) =>
     set((state) => {
+      const newDocuments = state.documents.filter((d) => d.uuid !== uuid);
+
+      let newCurrent = state.currentDocument;
+      if (state.currentDocument?.uuid === uuid) {
+        const removedIndex = state.documents.findIndex((d) => d.uuid === uuid);
+        const newIndex = Math.min(Math.max(0, removedIndex), newDocuments.length - 1);
+        newCurrent = newDocuments[newIndex] ?? null;
+      }
+
       const remainingSettings = Object.fromEntries(
         Object.entries(state.documentSettings).filter(([key]) => key !== uuid)
       );
-      return { 
-        documents: state.documents.filter((d) => d.uuid !== uuid),
-        currentDocument: state.currentDocument?.uuid === uuid ? null : state.currentDocument,
+
+      return {
+        documents: newDocuments,
+        currentDocument: newCurrent,
         documentSettings: remainingSettings,
       };
     }),

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Upload, Camera, X, Plus, Check, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -33,23 +33,32 @@ export function FileUpload({
 }: FileUploadProps) {
   const { t } = useTranslation();
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const previewsRef = useRef<string[]>([]);
   const [capturedFiles, setCapturedFiles] = useState<File[]>([]);
   const [previews, setPreviews] = useState<string[]>([]);
 
+  useEffect(() => {
+    previewsRef.current = previews;
+  }, [previews]);
+
+  useEffect(() => {
+    return () => {
+      previewsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      previewsRef.current = [];
+    };
+  }, []);
+
   const onDrop = useCallback((acceptedFiles: File[]) => {
-    if (acceptedFiles.length > 0) {
-      if (multiple) {
-        // Add to existing captured files
-        const newFiles = [...capturedFiles, ...acceptedFiles];
-        const newPreviews = acceptedFiles.map(file => URL.createObjectURL(file));
-        setCapturedFiles(newFiles);
-        setPreviews(prev => [...prev, ...newPreviews]);
-      } else {
-        // Single file mode - submit immediately
-        onFilesSelected(acceptedFiles);
-      }
+    if (acceptedFiles.length === 0) return;
+
+    if (multiple) {
+      const newPreviews = acceptedFiles.map((file) => URL.createObjectURL(file));
+      setCapturedFiles((prev) => [...prev, ...acceptedFiles]);
+      setPreviews((prev) => [...prev, ...newPreviews]);
+    } else {
+      onFilesSelected(acceptedFiles);
     }
-  }, [capturedFiles, multiple, onFilesSelected]);
+  }, [multiple, onFilesSelected]);
 
   const { getRootProps, getInputProps, isDragActive, isDragReject } = useDropzone({
     onDrop,
@@ -61,48 +70,60 @@ export function FileUpload({
 
   const handleCameraCapture = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (files && files.length > 0) {
-      const fileArray = Array.from(files);
-      if (multiple) {
-        const newFiles = [...capturedFiles, ...fileArray];
-        const newPreviews = fileArray.map(file => URL.createObjectURL(file));
-        setCapturedFiles(newFiles);
-        setPreviews(prev => [...prev, ...newPreviews]);
-      } else {
-        onFilesSelected(fileArray);
+    if (!files || files.length === 0) {
+      if (cameraInputRef.current) {
+        cameraInputRef.current.value = '';
       }
+      return;
     }
-    // Reset input so same file can be selected again
+
+    const fileArray = Array.from(files);
+    if (multiple) {
+      const newPreviews = fileArray.map((file) => URL.createObjectURL(file));
+      setCapturedFiles((prev) => [...prev, ...fileArray]);
+      setPreviews((prev) => [...prev, ...newPreviews]);
+    } else {
+      onFilesSelected(fileArray);
+    }
+
     if (cameraInputRef.current) {
       cameraInputRef.current.value = '';
     }
-  }, [capturedFiles, multiple, onFilesSelected]);
+  }, [multiple, onFilesSelected]);
 
   const openCamera = useCallback(() => {
     cameraInputRef.current?.click();
   }, []);
 
   const removeFile = useCallback((index: number) => {
-    URL.revokeObjectURL(previews[index]);
-    setCapturedFiles(prev => prev.filter((_, i) => i !== index));
-    setPreviews(prev => prev.filter((_, i) => i !== index));
-  }, [previews]);
+    setCapturedFiles((prev) => prev.filter((_, i) => i !== index));
+    setPreviews((prev) => {
+      const url = prev[index];
+      if (url) {
+        URL.revokeObjectURL(url);
+      }
+      return prev.filter((_, i) => i !== index);
+    });
+  }, []);
 
   const submitFiles = useCallback(() => {
-    if (capturedFiles.length > 0) {
-      onFilesSelected(capturedFiles);
-      // Clean up previews
-      previews.forEach(url => URL.revokeObjectURL(url));
-      setCapturedFiles([]);
-      setPreviews([]);
-    }
-  }, [capturedFiles, previews, onFilesSelected]);
+    if (capturedFiles.length === 0) return;
+
+    onFilesSelected(capturedFiles);
+    setCapturedFiles([]);
+    setPreviews((prev) => {
+      prev.forEach((url) => URL.revokeObjectURL(url));
+      return [];
+    });
+  }, [capturedFiles, onFilesSelected]);
 
   const clearAll = useCallback(() => {
-    previews.forEach(url => URL.revokeObjectURL(url));
     setCapturedFiles([]);
-    setPreviews([]);
-  }, [previews]);
+    setPreviews((prev) => {
+      prev.forEach((url) => URL.revokeObjectURL(url));
+      return [];
+    });
+  }, []);
 
   // Show preview grid if we have captured files
   if (capturedFiles.length > 0 && multiple) {
@@ -120,7 +141,7 @@ export function FileUpload({
               <button
                 type="button"
                 onClick={() => removeFile(index)}
-                className="absolute top-1 right-1 p-1 bg-destructive text-destructive-foreground rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                className="absolute top-1 right-1 p-1 bg-destructive text-destructive-foreground rounded-full opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
               >
                 <X className="w-4 h-4" />
               </button>

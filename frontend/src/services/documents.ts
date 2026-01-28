@@ -73,7 +73,8 @@ export const documentService = {
     return URL.createObjectURL(response.data);
   },
 
-  revokeImageUrl(url: string): void {
+  revokeImageUrl(url?: string): void {
+    if (!url) return;
     if (url.startsWith('blob:')) {
       URL.revokeObjectURL(url);
     }
@@ -93,7 +94,7 @@ export const documentService = {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    URL.revokeObjectURL(blobUrl);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
   },
 };
 

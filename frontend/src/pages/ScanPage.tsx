@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { useScanStore } from '@/store/scanStore';
 import { documentService, scanService } from '@/services/documents';
@@ -56,6 +56,7 @@ type Step = 'upload' | 'adjust' | 'process' | 'result';
 export function ScanPage() {
   const { t } = useTranslation();
   const location = useLocation();
+  const navigate = useNavigate();
   const {
     documents,
     currentDocument,
@@ -81,6 +82,17 @@ export function ScanPage() {
   const [isOcrLoading, setIsOcrLoading] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [imageUrls, setImageUrls] = useState<{ original?: string; processed?: string }>({});
+
+  const setTrackedImageUrls = useCallback(
+    (updater: (prev: { original?: string; processed?: string }) => { original?: string; processed?: string }) => {
+      setImageUrls((prev) => {
+        const next = updater(prev);
+        imageUrlsRef.current = next;
+        return next;
+      });
+    },
+    [],
+  );
   const [isLoadingImage, setIsLoadingImage] = useState(false);
   const [processProgress, setProcessProgress] = useState({ current: 0, total: 0 });
   const [multiSelectMode, setMultiSelectMode] = useState(false);
@@ -101,6 +113,7 @@ export function ScanPage() {
   
   // Track blob URLs for cleanup to prevent memory leaks
   const blobUrlsRef = useRef<Set<string>>(new Set());
+  const imageUrlsRef = useRef<{ original?: string; processed?: string }>({});
   
   // Helper to revoke and remove a blob URL
   const revokeBlobUrl = useCallback((url: string | undefined) => {
@@ -125,6 +138,8 @@ export function ScanPage() {
         documentService.revokeImageUrl(url);
       });
       blobUrlsRef.current.clear();
+
+      imageUrlsRef.current = {};
     };
   }, []);
 
@@ -144,52 +159,58 @@ export function ScanPage() {
         setStep('adjust');
       }
       // Clear location state to prevent re-triggering
-      window.history.replaceState({}, document.title);
+      navigate(location.pathname, { replace: true });
     }
-  }, [location.state, documents, addDocument, setCurrentDocument]);
+  }, [location.state, location.pathname, navigate, documents, addDocument, setCurrentDocument]);
 
   // Load image URLs when currentDocument changes
   useEffect(() => {
     if (!currentDocument) {
-      // Revoke any existing URLs when no document
-      revokeBlobUrl(imageUrls.original);
-      revokeBlobUrl(imageUrls.processed);
-      setImageUrls({});
+      const old = imageUrlsRef.current;
+      revokeBlobUrl(old.original);
+      revokeBlobUrl(old.processed);
+      setTrackedImageUrls(() => ({}));
       return;
     }
 
     const docUuid = currentDocument.uuid;
     const docStatus = currentDocument.status;
-    
+
     let cancelled = false;
 
     const loadImages = async () => {
       setIsLoadingImage(true);
-      
-      // Revoke old URLs before loading new ones
-      const oldOriginal = imageUrls.original;
-      const oldProcessed = imageUrls.processed;
-      
+
       try {
         const original = await documentService.getImageUrl(docUuid, 'original');
-        if (!cancelled) {
-          revokeBlobUrl(oldOriginal);
-          trackBlobUrl(original);
-          setImageUrls(prev => ({ ...prev, original }));
-        } else {
-          // If cancelled, revoke the newly fetched URL
+        if (cancelled) {
           documentService.revokeImageUrl(original);
+          return;
         }
+
+        setTrackedImageUrls((prev) => {
+          revokeBlobUrl(prev.original);
+          trackBlobUrl(original);
+          return { ...prev, original };
+        });
 
         if (docStatus === 'completed') {
           const processed = await documentService.getImageUrl(docUuid, 'processed');
-          if (!cancelled) {
-            revokeBlobUrl(oldProcessed);
-            trackBlobUrl(processed);
-            setImageUrls(prev => ({ ...prev, processed }));
-          } else {
+          if (cancelled) {
             documentService.revokeImageUrl(processed);
+            return;
           }
+
+          setTrackedImageUrls((prev) => {
+            revokeBlobUrl(prev.processed);
+            trackBlobUrl(processed);
+            return { ...prev, processed };
+          });
+        } else {
+          setTrackedImageUrls((prev) => {
+            revokeBlobUrl(prev.processed);
+            return { ...prev, processed: undefined };
+          });
         }
       } catch (error) {
         console.error('Failed to load images:', error);
@@ -205,7 +226,7 @@ export function ScanPage() {
     return () => {
       cancelled = true;
     };
-  }, [currentDocument?.uuid, currentDocument?.status]);
+  }, [currentDocument?.uuid, currentDocument?.status, revokeBlobUrl, setTrackedImageUrls, trackBlobUrl]);
 
   // Auto-detect edges when entering adjust step without corners
   useEffect(() => {
